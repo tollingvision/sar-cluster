@@ -1,0 +1,64 @@
+# Python
+*.py[cod]
+*$py.class
+*.so
+__pycache__/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+tolling-vision-env/
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# AWS / Deployment
+*.pem
+*.key
+.aws/
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+tmp/
+temp/
+
+# Test artifacts
+test-report.json
+template-size-history.csv
+template-size-log.json
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+template-optimized.yaml
+*.zip
+
+# Local parameter files (sensitive)
+*-params.json
+my-*.json
+local-*.json
+
+# S3 artifacts
+backup-*.yaml
+backup-*.json

@@ -1,0 +1,75 @@
+MIT License
+
+Copyright (c) 2025 Smart Cloud Solutions Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Important Notice
+
+The MIT License applies only to this CloudFormation template and the associated
+infrastructure helper code published in the AWS Serverless Application Repository.
+
+**The Docker container images launched by this template are not covered by the MIT License.**
+They are commercial software provided by Smart CFloud Solutions Inc. and are subject to a separate
+End User License Agreement (EULA): https://tollingvision.com/eula/
+
+A valid Tolling Vision LicenseKey and an active registration/subscription are required
+to run the container images.
+
+---
+
+## Third-Party Components
+
+This software includes the following third-party components:
+
+### AWS CloudFormation Templates
+- License: Apache License 2.0
+- Copyright: Amazon Web Services, Inc.
+
+### Tolling Vision Container Images
+- License: Tolling Vision EULA (https://tollingvision.com/eula/)
+- Provider: Tolling Vision (tollingvision.com)
+- Note: Valid license key and subscription required for container operation
+
+### AWS Lambda Runtime
+- License: Apache License 2.0
+- Copyright: Amazon Web Services, Inc.
+
+### Python Dependencies (boto3, botocore)
+- License: Apache License 2.0
+- Copyright: Amazon Web Services, Inc.
+
+## Usage Requirements
+
+1. **AWS Account**: Valid AWS account with appropriate permissions
+2. **Tolling Vision License**: Valid license key from tollingvision.com
+3. **SSL Certificate**: ACM certificate for custom domain
+4. **Domain Name**: Custom domain for API Gateway
+
+## Disclaimer
+
+This template is provided as-is for infrastructure deployment purposes. Users are responsible for:
+- Obtaining valid Tolling Vision licenses
+- Configuring appropriate security settings
+- Monitoring and maintaining deployed resources
+- Compliance with applicable laws and regulations
+
+The authors and contributors are not responsible for any costs, damages, or issues arising from the use of this template.

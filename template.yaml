@@ -1,0 +1,3603 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Tolling Vision ANPR/MMR Infrastructure - Complete deployment with Lambda custom resources for SAR compatibility"
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: tolling-vision
+    Description: "Complete Tolling Vision ANPR/MMR infrastructure. Deploys secure, scalable computer vision processing with optional WAF/JWT protection."
+    Author: "Smart Cloud Solutions Inc."
+    SpdxLicenseId: MIT
+    LicenseUrl: LICENSE
+    ReadmeUrl: README.md
+    Labels:
+      - "tolling"
+      - "image-review"
+      - "anpr"
+      - "mmr"
+      - "computer-vision"
+      - "infrastructure"
+      - "security"
+    HomePageUrl: https://tollingvision.com
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/tollingvision/sar-cluster
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Required Configuration"
+        Parameters:
+          - LicenseKey
+          - MaxSize
+
+      - Label:
+          default: "Docker Container Configuration"
+        Parameters:
+          - ProcessCount
+          - ImageArchitecture
+          - ImageTag
+          - ConcurrentRequestCount
+          - MaxRequestSize
+          - Backlog
+          - BacklogTimeout
+          - RequestTimeout
+
+      - Label:
+          default: "Auto Scaling Configuration"
+        Parameters:
+          - DesiredCapacity
+          - MinSize
+          - OnDemandPercentage
+          - KeyPairName
+          - EnableDetailedMonitoring
+
+      - Label:
+          default: "Domain and SSL Configuration"
+        Parameters:
+          - DomainName
+          - CertificateArn
+          - EnableDNS
+
+      - Label:
+          default: "JWT Authentication (Container-based)"
+        Parameters:
+          - CognitoUserPoolId
+          - CognitoRegion
+          - CognitoAppClientId
+          - CognitoRequiredScope
+
+      - Label:
+          default: "Security (WAF Protection)"
+        Parameters:
+          - EnableWAF
+          - AllowedIpCidrs
+          - EnableAWSManagedRules
+
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+          - PublicSubnet1Cidr
+          - PublicSubnet2Cidr
+
+      - Label:
+          default: "Observability & Logging"
+        Parameters:
+          - CloudWatchLogRetentionDays
+          - EnableSNSNotifications
+          - SNSNotificationEmail
+          - EnableCustomMetrics
+          - EnableALBAccessLogs
+          - ALBAccessLogsBucketName
+
+    ParameterLabels:
+      # Required Configuration
+      LicenseKey:
+        default: "Tolling Vision License Key *"
+      MaxSize:
+        default: "Maximum Instance Count *"
+
+      # Docker Container Configuration
+      ProcessCount:
+        default: "Processing Thread Count"
+      ImageArchitecture:
+        default: "Container Architecture"
+      ImageTag:
+        default: "Container Image Tag"
+      ConcurrentRequestCount:
+        default: "Concurrent Requests per Process"
+      MaxRequestSize:
+        default: "Maximum Request Size (bytes)"
+      Backlog:
+        default: "Request Queue Size"
+      BacklogTimeout:
+        default: "Queue Timeout (seconds)"
+      RequestTimeout:
+        default: "Request Timeout (seconds)"
+
+      # Auto Scaling Configuration
+      DesiredCapacity:
+        default: "Desired Instance Count"
+      MinSize:
+        default: "Minimum Instance Count"
+      OnDemandPercentage:
+        default: "On-Demand Instance Percentage"
+      KeyPairName:
+        default: "EC2 Key Pair (optional)"
+      EnableDetailedMonitoring:
+        default: "Enable Detailed CloudWatch Monitoring"
+
+      # API Gateway Configuration
+
+      # Domain and SSL Configuration
+      DomainName:
+        default: "Custom Domain Name (optional)"
+      CertificateArn:
+        default: "ACM Certificate ARN (optional)"
+      EnableDNS:
+        default: "Create Route53 DNS Records (Auto-Discovery)"
+
+      # JWT Authentication (Container-based)
+
+      CognitoUserPoolId:
+        default: "Cognito User Pool ID (optional)"
+      CognitoRegion:
+        default: "Cognito Region (optional)"
+      CognitoAppClientId:
+        default: "Cognito App Client ID (optional)"
+      CognitoRequiredScope:
+        default: "Required JWT Scope (optional)"
+
+      # Security Configuration
+      EnableWAF:
+        default: "Enable WAF Protection"
+      AllowedIpCidrs:
+        default: "IP CIDR Ranges for Allow/Deny List"
+      EnableAWSManagedRules:
+        default: "Enable AWS Managed Rule Groups"
+
+      # Network Configuration
+      VpcCidr:
+        default: "VPC CIDR Block"
+      PrivateSubnet1Cidr:
+        default: "Private Subnet 1 CIDR"
+      PrivateSubnet2Cidr:
+        default: "Private Subnet 2 CIDR"
+      PublicSubnet1Cidr:
+        default: "Public Subnet 1 CIDR"
+      PublicSubnet2Cidr:
+        default: "Public Subnet 2 CIDR"
+
+      # Observability Configuration
+      EnableALBAccessLogs:
+        default: "Enable ALB Access Logs"
+      ALBAccessLogsBucketName:
+        default: "ALB Logs S3 Bucket (optional)"
+      CloudWatchLogRetentionDays:
+        default: "CloudWatch Log Retention (days)"
+      EnableSNSNotifications:
+        default: "Enable SNS Notifications"
+      SNSNotificationEmail:
+        default: "Notification Email Address"
+      EnableCustomMetrics:
+        default: "Enable Custom Application Metrics"
+
+Parameters:
+  # ========================================
+  # Docker Image Configuration Parameters
+  # ========================================
+
+  LicenseKey:
+    Type: String
+    Description: "Tolling Vision license key for container activation and tollingvision.com validation"
+    NoEcho: true
+    MinLength: 10
+    MaxLength: 256
+    AllowedPattern: "^[A-Za-z0-9+/=_-]+$"
+    ConstraintDescription: "Must be a valid Tolling Vision license key (10-256 characters, alphanumeric and special chars)"
+
+  ProcessCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 64
+    Description: "Number of processing threads (affects memory requirements: 3GB + 1GB per additional process)"
+    ConstraintDescription: "Must be between 1 and 64 processes"
+
+  ConcurrentRequestCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 100
+    Description: "Maximum number of concurrent requests per process"
+    ConstraintDescription: "Must be between 1 and 100 concurrent requests"
+
+  MaxRequestSize:
+    Type: Number
+    Default: 6291456
+    MinValue: 1048576
+    MaxValue: 104857600
+    Description: "Maximum request size in bytes (default 6MB, max 100MB)"
+    ConstraintDescription: "Must be between 1MB (1048576) and 100MB (104857600) bytes"
+
+  Backlog:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+    Description: "Request backlog queue size"
+    ConstraintDescription: "Must be between 1 and 1000"
+
+  BacklogTimeout:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 300
+    Description: "Backlog timeout in seconds"
+    ConstraintDescription: "Must be between 1 and 300 seconds"
+
+  RequestTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 300
+    Description: "Individual request timeout in seconds"
+    ConstraintDescription: "Must be between 1 and 300 seconds"
+
+  ImageArchitecture:
+    Type: String
+    Default: "arm64"
+    AllowedValues: ["arm64", "x86-64"]
+    Description: "Container image architecture (affects instance type selection and performance)"
+
+  ImageTag:
+    Type: String
+    Default: "arm64"
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: "^[a-zA-Z0-9._-]+$"
+    Description: "Container image tag (should match ImageArchitecture unless using specific version)"
+    ConstraintDescription: "Must be a valid Docker tag (alphanumeric, dots, hyphens, underscores)"
+
+  # ========================================
+  # EC2 and Auto Scaling Configuration
+  # ========================================
+
+  DesiredCapacity:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 100
+    Description: "Desired number of EC2 instances in Auto Scaling Group (0 for cost optimization)"
+    ConstraintDescription: "Must be between 0 and 100 instances"
+
+  MinSize:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 100
+    Description: "Minimum number of EC2 instances in Auto Scaling Group"
+    ConstraintDescription: "Must be between 0 and 100 instances"
+
+  MaxSize:
+    Type: Number
+    MinValue: 1
+    MaxValue: 100
+    Description: "Maximum number of EC2 instances in Auto Scaling Group (required)"
+    ConstraintDescription: "Must be between 1 and 100 instances"
+
+  OnDemandPercentage:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: "Percentage of On-Demand instances (remainder will be Spot instances for cost savings)"
+    ConstraintDescription: "Must be between 0 and 100 percent"
+
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: "Optional EC2 Key Pair name for SSH access (leave empty for no SSH access - recommended for security)"
+    AllowedPattern: "^$|^[a-zA-Z0-9_-]+$"
+    ConstraintDescription: "Must be empty or a valid EC2 Key Pair name"
+
+  EnableDetailedMonitoring:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Enable detailed CloudWatch monitoring for EC2 instances (additional cost)"
+
+  # ========================================
+  # API Gateway and Domain Configuration
+  # ========================================
+
+  DomainName:
+    Type: String
+    Default: ""
+    MinLength: 0
+    MaxLength: 253
+    AllowedPattern: '^$|^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    Description: "Optional custom domain name for ALB (e.g., api.example.com). Leave empty to use ALB DNS name."
+    ConstraintDescription: "Must be empty or a valid domain name (e.g., api.example.com)"
+
+  CertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws:acm:[a-z0-9-]+:[0-9]{12}:certificate/[a-f0-9-]+$"
+    Description: "Optional ARN of the SSL certificate in ACM for HTTPS/TLS termination. Required if DomainName is specified."
+    ConstraintDescription: "Must be empty or a valid ACM certificate ARN"
+
+  EnableDNS:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Create Route53 DNS records pointing to the ALB. Requires DomainName. Hosted zone will be auto-discovered."
+
+  # ========================================
+  # JWT Authentication Configuration (Container-based)
+  # ========================================
+  CognitoUserPoolId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-zA-Z0-9-]+_[a-zA-Z0-9]+$"
+    Description: "Existing Cognito User Pool ID for JWT validation (leave empty to disable authentication)"
+    ConstraintDescription: "Must be empty or a valid Cognito User Pool ID format (e.g., us-east-1_XXXXXXXXX)"
+
+  CognitoRegion:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9-]+$"
+    Description: "AWS region for Cognito User Pool. Defaults to current stack region if empty."
+    ConstraintDescription: "Must be empty or a valid AWS region (e.g., us-east-1)"
+
+  CognitoAppClientId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-zA-Z0-9]+$"
+    Description: "Cognito App Client ID for JWT validation (leave empty to disable authentication)"
+    ConstraintDescription: "Must be empty or a valid Cognito App Client ID"
+
+  CognitoRequiredScope:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-zA-Z0-9_/-]+$"
+    Description: "Required JWT scope for API access (leave empty to disable authentication)"
+    ConstraintDescription: "Must be empty or a valid scope format (e.g., api/m2m)"
+
+  # ALB Access Logging
+  EnableALBAccessLogs:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Enable ALB access logs to S3 bucket (creates S3 bucket automatically)"
+
+  ALBAccessLogsBucketName:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    ConstraintDescription: "Must be empty or a valid S3 bucket name (lowercase, alphanumeric, hyphens)"
+    Description: "S3 bucket name for ALB access logs (leave empty for auto-generated name)"
+
+  # ========================================
+  # Security Configuration (WAF)
+  # ========================================
+
+  EnableWAF:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Enable WAF protection with IP allowlisting (recommended for production)"
+
+  AllowedIpCidrs:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: "Comma-separated list of IP CIDR ranges for allow/deny list (e.g., 10.0.0.0/8,192.168.1.0/24). Used when EnableWAF is true."
+
+  EnableAWSManagedRules:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Enable free AWS Managed Rule Groups (Common, Known Bad Inputs, Linux, IP Reputation)"
+
+  # ========================================
+  # Network Configuration
+  # ========================================
+
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    AllowedPattern: '^(10\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8]))$'
+    Description: "CIDR block for the VPC (must be /16 to /28 in 10.x.x.x range)"
+    ConstraintDescription: "Must be a valid private CIDR block in 10.x.x.x range with /16 to /28 prefix"
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: "10.0.1.0/24"
+    AllowedPattern: '^(10\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8]))$'
+    Description: "CIDR block for private subnet 1 (must be within VPC CIDR)"
+    ConstraintDescription: "Must be a valid CIDR block within the VPC range"
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: "10.0.2.0/24"
+    AllowedPattern: '^(10\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8]))$'
+    Description: "CIDR block for private subnet 2 (must be within VPC CIDR)"
+    ConstraintDescription: "Must be a valid CIDR block within the VPC range"
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: "10.0.101.0/24"
+    AllowedPattern: '^(10\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8]))$'
+    Description: "CIDR block for public subnet 1 (for NAT Gateway)"
+    ConstraintDescription: "Must be a valid CIDR block within the VPC range"
+
+  PublicSubnet2Cidr:
+    Type: String
+    Default: "10.0.102.0/24"
+    AllowedPattern: '^(10\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/(1[6-9]|2[0-8]))$'
+    Description: "CIDR block for public subnet 2 (for NAT Gateway)"
+    ConstraintDescription: "Must be a valid CIDR block within the VPC range"
+
+  # ========================================
+  # Observability Configuration
+  # ========================================
+  CloudWatchLogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues:
+      [
+        1,
+        3,
+        5,
+        7,
+        14,
+        30,
+        60,
+        90,
+        120,
+        150,
+        180,
+        365,
+        400,
+        545,
+        731,
+        1827,
+        3653,
+      ]
+    Description: "CloudWatch Logs retention period in days"
+    ConstraintDescription: "Must be a valid CloudWatch Logs retention period"
+
+  EnableSNSNotifications:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Enable SNS notifications for critical alerts and alarms"
+
+  SNSNotificationEmail:
+    Type: String
+    Default: ""
+    Description: "Email address for SNS notifications (required when EnableSNSNotifications is true)"
+    AllowedPattern: '^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    ConstraintDescription: "Must be empty or a valid email address"
+
+  EnableCustomMetrics:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Enable custom application metrics for enhanced monitoring"
+
+Conditions:
+  # ========================================
+  # Domain and DNS Conditions
+  # ========================================
+
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+
+  NoCertificate: !Equals [!Ref CertificateArn, ""]
+
+  EnableDNS: !Equals [!Ref EnableDNS, "true"]
+
+  EnableDNSManagement: !Condition EnableDNS
+
+  # ========================================
+  # JWT Authentication Conditions (Container-based)
+  # ========================================
+
+  EnableContainerJWT: !And
+    - !Not [!Equals [!Ref CognitoUserPoolId, ""]]
+    - !Not [!Equals [!Ref CognitoAppClientId, ""]]
+
+  # ========================================
+  # Security Conditions (WAF)
+  # ========================================
+  EnableWAFProtection: !Equals [!Ref EnableWAF, "true"]
+
+  HasAllowedIPs: !Not [!Equals [!Join ["", !Ref AllowedIpCidrs], ""]]
+
+  # WAF with IP set requires both WAF enabled and IP CIDRs provided
+  EnableWAFWithIPSet: !And
+    - !Condition EnableWAFProtection
+    - !Condition HasAllowedIPs
+
+  # ========================================
+  # EC2 and Infrastructure Conditions
+  # ========================================
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+  # ========================================
+  # ALB Access Logs Conditions
+  # ========================================
+  EnableALBLogs: !Equals [!Ref EnableALBAccessLogs, "true"]
+
+  NoALBLogs: !Equals [!Ref EnableALBAccessLogs, "false"]
+
+  # ========================================
+  # Observability Conditions
+  # ========================================
+  HasCustomALBLogsBucket: !Not [!Equals [!Ref ALBAccessLogsBucketName, ""]]
+
+  # SNS notification conditions
+  EnableSNSNotificationsCondition: !Equals [!Ref EnableSNSNotifications, "true"]
+
+  # Custom metrics conditions
+  EnableCustomMetricsCondition: !Equals [!Ref EnableCustomMetrics, "true"]
+
+  # ========================================
+  # Custom Resource Creation Conditions
+  # ========================================
+
+  # Conditions for when to create custom resources
+
+  CreateAutoScalingResource: !Not [!Equals [!Ref MaxSize, 0]] # Create ASG when MaxSize > 0
+
+Resources:
+  # ========================================
+  # VPC and Networking Resources
+  # ========================================
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-subnet-2"
+
+  # Public Subnets (for NAT Gateways)
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-2"
+
+  # Elastic IPs for NAT Gateways
+  NATGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-gateway-1-eip"
+
+  NATGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-gateway-2-eip"
+
+  # NAT Gateways
+  NATGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-gateway-1"
+
+  NATGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-gateway-2"
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-rt"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt-1"
+
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt-2"
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  # Security Groups
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for public Application Load Balancer"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: "HTTP traffic from internet"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: "HTTPS traffic from internet"
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for EC2 instances"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  # ========================================
+  # S3 Bucket for ALB Access Logs (Optional)
+  # ========================================
+
+  ALBAccessLogsBucket:
+    Type: AWS::S3::Bucket
+    Condition: EnableALBLogs
+    Properties:
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketName: !If
+        - HasCustomALBLogsBucket
+        - !Ref ALBAccessLogsBucketName
+        - !Sub "${AWS::StackName}-${AWS::AccountId}-logs"
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${AWS::AccountId}-logs"
+        - Key: Purpose
+          Value: "Logs Storage"
+
+  ALBAccessLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: EnableALBLogs
+    Properties:
+      Bucket: !Ref ALBAccessLogsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${ALBAccessLogsBucket}/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Sub "${AWS::AccountId}"
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:loadbalancer/app/*"
+          - Sid: AWSLogDeliveryListBucket
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Action:
+              - s3:GetBucketAcl
+              - s3:ListBucket
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${ALBAccessLogsBucket}"
+
+  # ========================================
+  # IAM Roles
+  # ========================================
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr-public:GetAuthorizationToken
+                  - ecr-public:BatchCheckLayerAvailability
+                  - ecr-public:GetDownloadUrlForLayer
+                  - ecr-public:BatchGetImage
+                Resource: "*"
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ec2/tolling-vision/${AWS::StackName}:*"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeTags
+                Resource: "*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  LambdaCustomResourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CustomResourcePermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - autoscaling:*
+                  - ec2:*
+                  - wafv2:*
+                  - cognito-idp:*
+                  - secretsmanager:*
+                  - elbv2:*
+                  - logs:*
+                  - route53:*
+                  - lambda:GetFunction
+                  - sts:GetCallerIdentity
+                  - iam:PassRole
+                Resource: "*"
+              - !If
+                - EnableALBLogs
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:ListBucketVersions
+                    - s3:GetBucketVersioning
+                    - s3:DeleteBucket
+                    - s3:DeleteObject
+                    - s3:DeleteObjectVersion
+                    - s3:PutBucketVersioning
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:s3:::${ALBAccessLogsBucket}
+                    - !Sub arn:${AWS::Partition}:s3:::${ALBAccessLogsBucket}/*
+                - !Ref AWS::NoValue
+
+  # ========================================
+  # Lambda Custom Resource Handler
+  # ========================================
+
+  TollingVisionCustomResourceHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-custom-resource-handler"
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaCustomResourceRole.Arn
+      Timeout: 870
+      MemorySize: 512
+      Environment:
+        Variables:
+          REGION: !Ref "AWS::Region"
+      Code:
+        ZipFile: |
+          import json,boto3,urllib.request,logging,time,os,traceback
+          from botocore.exceptions import ClientError,BotoCoreError
+
+          # Enhanced logging configuration
+          logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+          logger = logging.getLogger(__name__)
+
+          def lambda_handler(e,c):
+           """Enhanced Lambda handler with comprehensive error handling and logging"""
+           request_id = e.get('RequestId', 'unknown')
+           logical_resource_id = e.get('LogicalResourceId', 'unknown')
+           request_type = e.get('RequestType', 'unknown')
+
+           logger.info(f"[{request_id}] Starting {request_type} operation for resource {logical_resource_id}")
+
+           # Log remaining execution time for timeout monitoring
+           remaining_time = c.get_remaining_time_in_millis() if c else 900000
+           logger.info(f"[{request_id}] Remaining execution time: {remaining_time}ms")
+
+           try:
+            resource_type = e['ResourceProperties'].get('ResourceType')
+            logger.info(f"[{request_id}] Processing resource type: {resource_type}")
+
+            # Route to appropriate handler with enhanced error context
+            if resource_type == 'AutoScaling':
+             return handle_asg(e,c)
+            elif resource_type == 'WAF':
+             return handle_waf(e,c)
+            elif resource_type == 'CognitoClientSecret':
+             return handle_cognito_secret(e,c)
+            elif resource_type == 'Route53DNS':
+             return handle_route53_dns(e,c)
+            elif resource_type == 'StackCleanup':
+             return handle_stack_cleanup(e,c)
+            elif resource_type == 'PurgeS3BucketOnDelete':
+             return handle_purge_s3_bucket_on_delete(e, c)
+            else:
+             error_msg = f"Unknown resource type: {resource_type}"
+             logger.error(f"[{request_id}] {error_msg}")
+             return send_response(e,c,'FAILED',error_msg)
+
+           except KeyError as ex:
+            error_msg = f"Missing required parameter: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            return send_response(e,c,'FAILED',error_msg)
+
+           except (ClientError, BotoCoreError) as ex:
+            error_msg = f"AWS API error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] Full traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+
+           except Exception as ex:
+            error_msg = f"Unexpected error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] Full traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+
+           finally:
+            # Log final execution time for performance monitoring
+            final_remaining = c.get_remaining_time_in_millis() if c else 0
+            execution_time = remaining_time - final_remaining
+            logger.info(f"[{request_id}] Operation completed. Execution time: {execution_time}ms")
+
+          def handle_asg(e,c):
+           """Enhanced Auto Scaling Group handler with comprehensive error handling and monitoring"""
+           request_id = e.get('RequestId', 'unknown')
+           rt,p = e['RequestType'],e['ResourceProperties']
+
+           logger.info(f"[{request_id}] ASG operation: {rt}")
+
+           try:
+            if rt == 'Create':
+             logger.info(f"[{request_id}] Creating Auto Scaling Group and Launch Template")
+
+             ec2,asg = boto3.client('ec2'),boto3.client('autoscaling')
+             lt_name = p['LaunchTemplateName']
+
+             # Get AMI and region with error handling
+             arch = p.get('ImageArchitecture','arm64')
+             try:
+              region = c.invoked_function_arn.split(':')[3]
+             except:
+              region = os.environ.get('REGION', 'us-east-1')
+
+             logger.info(f"[{request_id}] Architecture: {arch}, Region: {region}")
+
+             # Convert architecture parameter to mapping key (CloudFormation mapping keys can't contain hyphens)
+             arch_key = 'x8664' if arch == 'x86-64' else arch
+
+             # Use EC2 describe_images to find the latest Amazon Linux 2023 AMI for the architecture
+             ec2 = boto3.client('ec2', region_name=region)
+
+             # Map architecture parameter to AMI architecture filter
+             ami_arch = 'arm64' if arch == 'arm64' else 'x86_64'
+
+             try:
+                 # Find latest Amazon Linux 2023 AMI for the specified architecture
+                 response = ec2.describe_images(
+                     Owners=['amazon'],
+                     Filters=[
+                         {'Name': 'name', 'Values': ['al2023-ami-*']},
+                         {'Name': 'architecture', 'Values': [ami_arch]},
+                         {'Name': 'state', 'Values': ['available']},
+                         {'Name': 'virtualization-type', 'Values': ['hvm']}
+                     ]
+                 )
+
+                 if not response['Images']:
+                     raise Exception(f"No Amazon Linux 2023 AMI found for architecture {ami_arch}")
+
+                 # Sort by creation date and get the latest
+                 images = sorted(response['Images'], key=lambda x: x['CreationDate'], reverse=True)
+                 ami = images[0]['ImageId']
+                 logger.info(f"[{request_id}] Found latest AMI: {ami} for architecture {ami_arch}")
+
+             except Exception as e:
+                 logger.error(f"[{request_id}] Failed to find AMI: {str(e)}")
+                 # Fallback to known working AMIs (current as of deployment)
+                 fallback_amis = {
+                     'arm64': 'ami-00411dded7037d536',    # Amazon Linux 2023 ARM64 (us-east-1)
+                     'x86_64': 'ami-0f00d706c4a80fd93'    # Amazon Linux 2023 x86_64 (us-east-1)
+                 }
+                 ami = fallback_amis.get(ami_arch, 'ami-0f00d706c4a80fd93')
+                 logger.info(f"[{request_id}] Using fallback AMI: {ami}")
+
+             # Get instance types based on ProcessCount and Architecture with validation
+             process_count = int(p.get('ProcessCount',1))
+             logger.info(f"[{request_id}] Process count: {process_count}")
+
+             if process_count <= 2:
+                 inst_types = {'arm64':['t4g.medium','t4g.large'],'x86-64':['t3.medium','t3.large']}
+             elif process_count <= 4:
+                 inst_types = {'arm64':['t4g.large','t4g.xlarge'],'x86-64':['t3.large','t3.xlarge']}
+             elif process_count <= 8:
+                 inst_types = {'arm64':['c7g.2xlarge','c8g.2xlarge'],'x86-64':['c6i.2xlarge','c7i.2xlarge']}
+             elif process_count <= 16:
+                 inst_types = {'arm64':['c7g.4xlarge','c8g.4xlarge'],'x86-64':['c6i.4xlarge','c7i.4xlarge']}
+             elif process_count <= 32:
+                 inst_types = {'arm64':['c7g.8xlarge','c8g.8xlarge'],'x86-64':['c6i.8xlarge','c7i.8xlarge']}
+             else:
+                 inst_types = {'arm64':['c7g.16xlarge','c8g.16xlarge'],'x86-64':['c6i.16xlarge','c7i.16xlarge']}
+
+             it = inst_types.get(arch,['t4g.medium'])
+             logger.info(f"[{request_id}] Selected instance types: {it}")
+
+             # Build comprehensive User Data script with all container environment variables
+             license_key = p.get('LicenseKey', '')
+             process_count = p.get('ProcessCount', '1')
+             concurrent_requests = p.get('ConcurrentRequestCount', '1')
+             max_request_size = p.get('MaxRequestSize', '6291456')
+             backlog = p.get('Backlog', '10')
+             backlog_timeout = p.get('BacklogTimeout', '60')
+             request_timeout = p.get('RequestTimeout', '30')
+             image_tag = p.get('ImageTag', arch)
+             log_group = p.get('LogGroupName', f'/aws/ec2/tolling-vision/{p.get("AutoScalingGroupName", "default")}')
+             region = p.get('Region', 'us-east-1')
+
+             # Architecture-specific container image selection
+             container_image = f"public.ecr.aws/smartcloud/tollingvision:{image_tag}"
+
+             # JWT Authentication environment variables (optional)
+             cognito_user_pool_id = p.get('CognitoUserPoolId', '')
+             cognito_region = p.get('CognitoRegion', '')
+             cognito_app_client_id = p.get('CognitoAppClientId', '')
+             cognito_required_scope = p.get('CognitoRequiredScope', '')
+
+             # Build JWT environment variables string for container
+             jwt_env_vars_list = []
+             if cognito_user_pool_id and cognito_region and cognito_app_client_id:
+                 jwt_env_vars_list.append(f'-e CognitoUserPoolId="{cognito_user_pool_id}"')
+                 jwt_env_vars_list.append(f'-e CognitoRegion="{cognito_region}"')
+                 jwt_env_vars_list.append(f'-e CognitoAppClientId="{cognito_app_client_id}"')
+                 if cognito_required_scope:
+                     jwt_env_vars_list.append(f'-e CognitoRequiredScope="{cognito_required_scope}"')
+
+             # Join with proper line continuation or empty string
+             line_continuation = ' \\\n            '
+             jwt_env_vars = line_continuation.join(jwt_env_vars_list) if jwt_env_vars_list else ''
+
+             # Prepare backslash continuation for f-string
+             backslash_continuation = ' \\\n            '
+             jwt_env_vars_with_continuation = jwt_env_vars + backslash_continuation if jwt_env_vars else ''
+
+             ud = f"""#!/bin/bash
+          # Update system and install required packages
+          yum update -y
+          yum install -y docker amazon-cloudwatch-agent aws-cfn-bootstrap
+
+          # Start and enable Docker service
+          systemctl start docker
+          systemctl enable docker
+          usermod -a -G docker ec2-user
+
+          # Ensure CloudWatch Agent config directory exists (before writing config)
+          mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+
+          # Get instance metadata for CloudWatch configuration
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+          # Configure CloudWatch Logs agent for Docker container logs
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
+          {{
+            "logs": {{
+              "logs_collected": {{
+                "files": {{
+                  "collect_list": [
+                    {{
+                      "file_path": "/var/log/containers/tolling-vision*.log",
+                      "log_group_name": "{log_group}",
+                      "log_stream_name": "$INSTANCE_ID/container",
+                      "timezone": "UTC",
+                      "multi_line_start_pattern": "{{^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}"
+                    }},
+                    {{
+                      "file_path": "/var/log/tolling-vision/startup.log",
+                      "log_group_name": "{log_group}",
+                      "log_stream_name": "$INSTANCE_ID/startup",
+                      "timezone": "UTC"
+                    }}
+                  ]
+                }}
+              }}
+            }},
+            "metrics": {{
+              "namespace": "TollingVision/EC2",
+              "metrics_collected": {{
+                "cpu": {{
+                  "measurement": ["cpu_usage_idle", "cpu_usage_iowait", "cpu_usage_user", "cpu_usage_system"],
+                  "metrics_collection_interval": 60
+                }},
+                "disk": {{
+                  "measurement": ["used_percent"],
+                  "metrics_collection_interval": 60,
+                  "resources": ["*"]
+                }},
+                "mem": {{
+                  "measurement": ["mem_used_percent"],
+                  "metrics_collection_interval": 60
+                }}
+              }}
+            }}
+          }}
+          EOF
+
+          # Create log directory for container logs
+          mkdir -p /var/log/tolling-vision
+
+          # Start CloudWatch agent (and enable it to survive reboots)
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+          systemctl enable amazon-cloudwatch-agent || true
+
+          # Helper function to signal CloudFormation
+          # Validate memory requirements (3GB + 1GB per additional process)
+          REQUIRED_MEMORY_MB=$((3072 + ({process_count} - 1) * 1024))
+          AVAILABLE_MEMORY_MB=$(free -m | awk 'NR==2{{print $2}}')
+
+          if [ $AVAILABLE_MEMORY_MB -lt $REQUIRED_MEMORY_MB ]; then
+            echo "$(date): ERROR - Insufficient memory. Required: ${{REQUIRED_MEMORY_MB}}MB, Available: ${{AVAILABLE_MEMORY_MB}}MB" >> /var/log/tolling-vision/startup.log
+            /opt/aws/bin/cfn-signal -e 1 --stack {p.get('StackName', 'unknown')} --resource CustomAutoScalingGroup --region {region}
+            exit 1
+          fi
+
+          echo "$(date): Memory validation passed. Required: ${{REQUIRED_MEMORY_MB}}MB, Available: ${{AVAILABLE_MEMORY_MB}}MB" >> /var/log/tolling-vision/startup.log
+
+          # Pull and run Tolling Vision container with comprehensive environment configuration
+          echo "$(date): Pulling container image {container_image}" >> /var/log/tolling-vision/startup.log
+          docker pull {container_image}
+
+          # Run container with all environment variables and logging configuration
+          echo "$(date): Starting Tolling Vision container with ProcessCount={process_count}, Architecture={arch}" >> /var/log/tolling-vision/startup.log
+
+          # Create symlink for Docker container logs to be accessible by CloudWatch agent
+          mkdir -p /var/log/containers
+
+          CONTAINER_ID=$(docker run -d \\
+            --name tolling-vision \\
+            --restart unless-stopped \\
+            -p 80:80 \\
+            --log-driver json-file \\
+            --log-opt max-size=100m \\
+            --log-opt max-file=5 \\
+            -e LicenseKey="{license_key}" \\
+            -e ProcessCount="{process_count}" \\
+            -e ConcurrentRequestCount="{concurrent_requests}" \\
+            -e MaxRequestSize="{max_request_size}" \\
+            -e Backlog="{backlog}" \\
+            -e BacklogTimeout="{backlog_timeout}" \\
+            -e RequestTimeout="{request_timeout}" \\
+            -e LogLevel="INFO" \\
+            {jwt_env_vars_with_continuation} {container_image})
+
+          # Create symlink to Docker's actual log location for CloudWatch agent
+          sleep 5
+          DOCKER_LOG_PATH="/var/lib/docker/containers/$CONTAINER_ID/$CONTAINER_ID-json.log"
+          if [ -f "$DOCKER_LOG_PATH" ]; then
+            ln -sf "$DOCKER_LOG_PATH" /var/log/containers/tolling-vision.log
+          fi
+
+          if [ $? -eq 0 ]; then
+            echo "$(date): Container started successfully with ID: $CONTAINER_ID" >> /var/log/tolling-vision/startup.log
+          else
+            echo "$(date): ERROR - Failed to start container" >> /var/log/tolling-vision/startup.log
+            /opt/aws/bin/cfn-signal -e 1 --stack {p.get('StackName', 'unknown')} --resource CustomAutoScalingGroup --region {region}
+            exit 1
+          fi
+          """
+
+             # Base64 encode the User Data for Launch Template
+             import base64
+             ud_encoded = base64.b64encode(ud.encode('utf-8')).decode('utf-8')
+             # Create Launch Template with comprehensive configuration and error handling
+             logger.info(f"[{request_id}] Creating Launch Template: {lt_name}")
+
+             launch_template_data = {
+                 'ImageId': ami,
+                 'InstanceType': it[0],
+                 'IamInstanceProfile': {'Name': p.get('InstanceProfile', '')},
+                 'SecurityGroupIds': p.get('SecurityGroupIds', []),
+                 'UserData': ud_encoded,
+                 'Monitoring': {'Enabled': p.get('EnableDetailedMonitoring', 'false') == 'true'},
+                 'TagSpecifications': [
+                     {
+                         'ResourceType': 'instance',
+                         'Tags': [
+                             {'Key': 'Name', 'Value': f"{p.get('StackName', 'tolling-vision')}-instance"},
+                             {'Key': 'Application', 'Value': 'TollingVision'},
+                             {'Key': 'Architecture', 'Value': arch},
+                             {'Key': 'ProcessCount', 'Value': str(process_count)}
+                         ]
+                     }
+                 ]
+             }
+
+             # Add KeyName only if provided
+             if p.get('KeyName'):
+                 launch_template_data['KeyName'] = p.get('KeyName')
+                 logger.info(f"[{request_id}] Added SSH key: {p.get('KeyName')}")
+
+             try:
+              lt_resp = ec2.create_launch_template(
+                  LaunchTemplateName=lt_name,
+                  LaunchTemplateData=launch_template_data
+              )
+              lt_id = lt_resp['LaunchTemplate']['LaunchTemplateId']
+              logger.info(f"[{request_id}] Launch Template created: {lt_id}")
+
+             except ClientError as lt_ex:
+              error_msg = f"Failed to create Launch Template: {str(lt_ex)}"
+              logger.error(f"[{request_id}] {error_msg}")
+              raise ValueError(error_msg)
+
+             # Create Auto Scaling Group with enhanced error handling
+             asg_name = p['AutoScalingGroupName']
+             min_size = int(p.get('MinSize',0))
+             max_size = int(p.get('MaxSize',1))
+             desired_capacity = int(p.get('DesiredCapacity',0))
+
+             logger.info(f"[{request_id}] Creating ASG: {asg_name} (Min:{min_size}, Max:{max_size}, Desired:{desired_capacity})")
+
+             try:
+              on_demand_pct = int(p.get('OnDemandPercentage', 100))
+              overrides = [{'InstanceType': t} for t in it]
+              base_kwargs = dict(
+                  AutoScalingGroupName=asg_name,
+                  MinSize=min_size,
+                  MaxSize=max_size,
+                  DesiredCapacity=desired_capacity,
+                  VPCZoneIdentifier=','.join(p['VPCZoneIdentifier']),
+                  TargetGroupARNs=p.get('TargetGroupARNs', []),
+                  HealthCheckType='ELB',
+                  HealthCheckGracePeriod=300,
+                  Tags=[
+                      {
+                          'Key': 'Name',
+                          'Value': f"{p.get('StackName', 'tolling-vision')}-asg",
+                          'PropagateAtLaunch': False,
+                          'ResourceId': asg_name,
+                          'ResourceType': 'auto-scaling-group'
+                      }
+                  ]
+              )
+
+              if on_demand_pct < 100:
+                  asg.create_auto_scaling_group(
+                      **base_kwargs,
+                      MixedInstancesPolicy={
+                          'LaunchTemplate': {
+                              'LaunchTemplateSpecification': {'LaunchTemplateId': lt_id, 'Version': '$Latest'},
+                              'Overrides': overrides[1:]  # az első az LT-ben már megvan
+                          },
+                          'InstancesDistribution': {
+                              'OnDemandPercentageAboveBaseCapacity': on_demand_pct,
+                              'SpotAllocationStrategy': 'capacity-optimized'
+                          }
+                      },
+                      CapacityRebalance=True
+                  )
+              else:
+                  asg.create_auto_scaling_group(
+                      **base_kwargs,
+                      LaunchTemplate={'LaunchTemplateId': lt_id, 'Version': '$Latest'}
+                  )
+
+              logger.info(f"[{request_id}] ASG created successfully: {asg_name}")
+
+             except ClientError as asg_ex:
+              # Cleanup Launch Template if ASG creation fails
+              logger.error(f"[{request_id}] ASG creation failed: {str(asg_ex)}")
+              try:
+               logger.info(f"[{request_id}] Cleaning up Launch Template: {lt_id}")
+               ec2.delete_launch_template(LaunchTemplateId=lt_id)
+               logger.info(f"[{request_id}] Launch Template cleanup successful")
+              except Exception as cleanup_ex:
+               logger.error(f"[{request_id}] Failed to cleanup Launch Template: {str(cleanup_ex)}")
+              raise ValueError(f"Failed to create ASG: {str(asg_ex)}")
+
+             # Get ASG details including ARN
+             try:
+              asg_resp = asg.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+              asg_arn = None
+              if asg_resp['AutoScalingGroups']:
+               asg_arn = asg_resp['AutoScalingGroups'][0]['AutoScalingGroupARN']
+               logger.info(f"[{request_id}] ASG ARN: {asg_arn}")
+              else:
+               logger.warning(f"[{request_id}] Could not retrieve ASG details for ARN")
+               # Get account ID from STS for ARN construction
+               try:
+                sts = boto3.client('sts')
+                account_id = sts.get_caller_identity()['Account']
+                asg_arn = f"arn:aws:autoscaling:{region}:{account_id}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
+               except Exception as sts_ex:
+                logger.error(f"[{request_id}] Failed to get account ID: {str(sts_ex)}")
+                asg_arn = f"arn:aws:autoscaling:{region}:unknown:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
+             except Exception as arn_ex:
+              logger.warning(f"[{request_id}] Failed to get ASG ARN: {str(arn_ex)}")
+              # Get account ID from STS for ARN construction
+              try:
+               sts = boto3.client('sts')
+               account_id = sts.get_caller_identity()['Account']
+               asg_arn = f"arn:aws:autoscaling:{region}:{account_id}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
+              except Exception as sts_ex:
+               logger.error(f"[{request_id}] Failed to get account ID: {str(sts_ex)}")
+               asg_arn = f"arn:aws:autoscaling:{region}:unknown:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
+
+             return send_response(e,c,'SUCCESS','ASG created',asg_name,{
+              'AutoScalingGroupName': asg_name,
+              'AutoScalingGroupArn': asg_arn,
+              'LaunchTemplateId': lt_id
+             })
+            elif rt == 'Delete':
+             logger.info(f"[{request_id}] Deleting Auto Scaling Group")
+
+             asg = boto3.client('autoscaling')
+             ec2 = boto3.client('ec2')
+             asg_name = e.get('PhysicalResourceId')
+
+             if asg_name and asg_name != 'unknown':
+              logger.info(f"[{request_id}] Deleting ASG: {asg_name}")
+
+              try:
+               # Get Launch Template info before deleting ASG
+               asg_resp = asg.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+               lt_name = None
+               lt_id = None
+
+               if asg_resp['AutoScalingGroups']:
+                asg_info = asg_resp['AutoScalingGroups'][0]
+                if 'LaunchTemplate' in asg_info:
+                 lt_name = asg_info['LaunchTemplate'].get('LaunchTemplateName')
+                 lt_id = asg_info['LaunchTemplate'].get('LaunchTemplateId')
+                 logger.info(f"[{request_id}] Found Launch Template: {lt_name} ({lt_id})")
+
+                # Delete ASG with force delete to remove instances
+                logger.info(f"[{request_id}] Deleting ASG with force delete")
+                asg.delete_auto_scaling_group(AutoScalingGroupName=asg_name, ForceDelete=True)
+
+                # Wait for ASG deletion to complete
+                logger.info(f"[{request_id}] Waiting for ASG deletion to complete...")
+                time.sleep(60)  # Increased wait time for proper cleanup
+
+                # Delete Launch Template if it exists
+                if lt_name or lt_id:
+                 try:
+                  if lt_id:
+                   logger.info(f"[{request_id}] Deleting Launch Template by ID: {lt_id}")
+                   ec2.delete_launch_template(LaunchTemplateId=lt_id)
+                  elif lt_name:
+                   logger.info(f"[{request_id}] Deleting Launch Template by name: {lt_name}")
+                   ec2.delete_launch_template(LaunchTemplateName=lt_name)
+                  logger.info(f"[{request_id}] Launch Template deleted successfully")
+                 except ClientError as lt_ex:
+                  if lt_ex.response['Error']['Code'] == 'InvalidLaunchTemplateName.NotFound':
+                   logger.info(f"[{request_id}] Launch Template not found (already deleted)")
+                  else:
+                   logger.error(f"[{request_id}] Error deleting Launch Template: {str(lt_ex)}")
+                 except Exception as lt_ex:
+                  logger.error(f"[{request_id}] Unexpected error deleting Launch Template: {str(lt_ex)}")
+               else:
+                logger.info(f"[{request_id}] ASG not found (already deleted)")
+
+              except ClientError as ex:
+               if ex.response['Error']['Code'] == 'ValidationError':
+                logger.info(f"[{request_id}] ASG not found (already deleted): {asg_name}")
+               else:
+                logger.error(f"[{request_id}] Error deleting ASG: {str(ex)}")
+                # Don't fail the deletion - log and continue
+              except Exception as ex:
+               logger.error(f"[{request_id}] Unexpected error during ASG deletion: {str(ex)}")
+               # Don't fail the deletion - log and continue
+             else:
+              logger.info(f"[{request_id}] No ASG ID to delete")
+
+             logger.info(f"[{request_id}] ASG deletion completed")
+             return send_response(e,c,'SUCCESS','ASG deleted')
+
+            else:
+             logger.info(f"[{request_id}] ASG update operation (no-op)")
+             return send_response(e,c,'SUCCESS','ASG update',e['PhysicalResourceId'])
+
+           except Exception as ex:
+            error_msg = f"ASG error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] ASG traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+          def handle_waf(e,c):
+           """Enhanced WAF handler with comprehensive error handling and cleanup"""
+           request_id = e.get('RequestId', 'unknown')
+           rt,p = e['RequestType'],e['ResourceProperties']
+
+           logger.info(f"[{request_id}] WAF operation: {rt}")
+
+           try:
+            waf = boto3.client('wafv2')
+
+            if rt == 'Create':
+             logger.info(f"[{request_id}] Creating WAF WebACL: {p['Name']}")
+
+             rules = []
+             ipset_arn = None
+             priority_counter = 1
+
+             # Add AWS Managed Rules first
+             if p.get('EnableAWSManagedRules', 'true') == 'true':
+              logger.info(f"[{request_id}] Adding AWS Managed Rules")
+
+              # Amazon IP Reputation List
+              rules.append({
+                  'Name': 'AWSManagedRulesAmazonIpReputationList',
+                  'Priority': priority_counter,
+                  'Statement': {
+                      'ManagedRuleGroupStatement': {
+                          'VendorName': 'AWS',
+                          'Name': 'AWSManagedRulesAmazonIpReputationList'
+                      }
+                  },
+                  'OverrideAction': {'None': {}},
+                  'VisibilityConfig': {
+                      'SampledRequestsEnabled': True,
+                      'CloudWatchMetricsEnabled': True,
+                      'MetricName': 'AWSManagedRulesAmazonIpReputationList'
+                  }
+              })
+              priority_counter += 1
+
+              # Anonymous IP List
+              rules.append({
+                  'Name': 'AWSManagedRulesAnonymousIpList',
+                  'Priority': priority_counter,
+                  'Statement': {
+                      'ManagedRuleGroupStatement': {
+                          'VendorName': 'AWS',
+                          'Name': 'AWSManagedRulesAnonymousIpList'
+                      }
+                  },
+                  'OverrideAction': {'None': {}},
+                  'VisibilityConfig': {
+                      'SampledRequestsEnabled': True,
+                      'CloudWatchMetricsEnabled': True,
+                      'MetricName': 'AWSManagedRulesAnonymousIpList'
+                  }
+              })
+              priority_counter += 1
+              logger.info(f"[{request_id}] Added AWS Managed Rules for IP reputation and anonymous IPs")
+
+             # Create IP Set if allowed IPs are provided
+             if p.get('AllowedIpCidrs'):
+              logger.info(f"[{request_id}] Creating IP Set with CIDRs: {p['AllowedIpCidrs']}")
+
+              try:
+               ipset_resp = waf.create_ip_set(
+                   Name=f"{p['Name']}-ipset",
+                   Scope=p.get('Scope','REGIONAL'),
+                   IPAddressVersion='IPV4',
+                   Addresses=p['AllowedIpCidrs'],
+                   Description=f"IP allowlist for {p['Name']}"
+               )
+               ipset_arn = ipset_resp['Summary']['ARN']
+               ipset_id = ipset_resp['Summary']['Id']
+               logger.info(f"[{request_id}] IP Set created: {ipset_arn}")
+               import time
+               for attempt in range(10):
+                try:
+                 waf.get_ip_set(Name=f"{p['Name']}-ipset", Scope=p.get('Scope','REGIONAL'), Id=ipset_id)
+                 break
+                except waf.exceptions.WAFUnavailableEntityException as ex:
+                 time.sleep(1 + attempt)
+               else:
+                raise Exception("IPSet is not available yet for WAF after retries")
+               # Create allow rule for IP Set (higher priority than managed rules)
+               rules.insert(0, {
+                   'Name': 'AllowIPRule',
+                   'Priority': 0,
+                   'Statement': {'IPSetReferenceStatement': {'ARN': ipset_arn}},
+                   'Action': {'Allow': {}},
+                   'VisibilityConfig': {
+                       'SampledRequestsEnabled': True,
+                       'CloudWatchMetricsEnabled': True,
+                       'MetricName': 'AllowIPRule'
+                   }
+               })
+               # Adjust other rule priorities
+               for i, rule in enumerate(rules[1:], 1):
+                rule['Priority'] = i
+               logger.info(f"[{request_id}] Added IP allow rule to WebACL with highest priority")
+
+              except ClientError as ipset_ex:
+               logger.error(f"[{request_id}] Failed to create IP Set: {str(ipset_ex)}")
+               raise ValueError(f"Failed to create IP Set: {str(ipset_ex)}")
+
+             # Create WebACL with enhanced configuration
+             try:
+              # Default action logic: BLOCK when IP Set is specified, ALLOW otherwise
+              if p.get('AllowedIpCidrs'):
+               default_action = {'Block': {}}
+               default_action_name = 'BLOCK'
+               logger.info(f"[{request_id}] IP Set specified - using BLOCK as default action")
+              else:
+               default_action = {'Allow': {}}
+               default_action_name = 'ALLOW'
+               logger.info(f"[{request_id}] No IP Set specified - using ALLOW as default action")
+
+              logger.info(f"[{request_id}] Creating WebACL with default action: {default_action_name}")
+
+              import time, botocore
+              for attempt in range(8):
+               try:
+                webacl_resp = waf.create_web_acl(
+                    Name=p['Name'],
+                    Scope=p.get('Scope','REGIONAL'),
+                    DefaultAction=default_action,
+                    Rules=rules,
+                    VisibilityConfig={
+                        'SampledRequestsEnabled': True,
+                        'CloudWatchMetricsEnabled': True,
+                        'MetricName': p['Name']
+                      },
+                    Description=f"WAF WebACL for Tolling Vision - {p['Name']}"
+                )
+                break
+               except waf.exceptions.WAFUnavailableEntityException as ex:
+                time.sleep(min(1*(2**attempt), 10))
+
+              webacl_id = webacl_resp['Summary']['Id']
+              webacl_arn = webacl_resp['Summary']['ARN']
+              logger.info(f"[{request_id}] WebACL created successfully: {webacl_arn}")
+
+              return send_response(e,c,'SUCCESS','WAF created',webacl_id,{
+                  'WebACLId': webacl_id,
+                  'WebACLArn': webacl_arn,
+                  'IPSetArn': ipset_arn,
+                  'IPSetId': ipset_id,
+              })
+
+             except ClientError as webacl_ex:
+              # Cleanup IP Set if WebACL creation fails
+              if ipset_arn:
+               logger.error(f"[{request_id}] WebACL creation failed, cleaning up IP Set")
+               try:
+                waf.delete_ip_set(
+                    Name=f"{p['Name']}-ipset",
+                    Scope=p.get('Scope','REGIONAL'),
+                    Id=ipset_arn.split('/')[-1],
+                    LockToken=waf.get_ip_set(
+                        Name=f"{p['Name']}-ipset",
+                        Scope=p.get('Scope','REGIONAL'),
+                        Id=ipset_arn.split('/')[-1]
+                    )['LockToken']
+                )
+                logger.info(f"[{request_id}] IP Set cleanup successful")
+               except Exception as cleanup_ex:
+                logger.error(f"[{request_id}] Failed to cleanup IP Set: {str(cleanup_ex)}")
+
+              raise ValueError(f"Failed to create WebACL: {str(webacl_ex)}")
+
+            elif rt == 'Delete':
+             webacl_id = e.get('PhysicalResourceId')
+             webacl_name=p['Name']
+
+             if webacl_id and webacl_id != 'unknown':
+              logger.info(f"[{request_id}] Deleting WAF WebACL: {webacl_id}")
+
+              try:
+               # Get WebACL details for lock token
+               logger.info(f"[{request_id}] Getting WebACL details for ID: {webacl_id} ({webacl_name})")
+               
+               webacl_resp = waf.get_web_acl(
+                   Scope=p.get('Scope','REGIONAL'),
+                   Id=webacl_id,
+                   Name=webacl_name
+               )
+               logger.info(f"[{request_id}] Successfully retrieved WebACL details")
+
+               # Delete WebACL
+               waf.delete_web_acl(
+                   Scope=p.get('Scope','REGIONAL'),
+                   Name=webacl_name,
+                   Id=webacl_id,
+                   LockToken=webacl_resp['LockToken']
+               )
+               logger.info(f"[{request_id}] WebACL deleted successfully")
+
+               # Try to delete associated IP Set (best effort)
+               try:
+                ipset_name = f"{p['Name']}-ipset",
+                logger.info(f"[{request_id}] Attempting to delete IP Set: {ipset_name}")
+
+                # List IP Sets to find the one with our name
+                ipsets_resp = waf.list_ip_sets(Scope=p.get('Scope','REGIONAL'))
+                ipset_id = None
+
+                for ipset in ipsets_resp.get('IPSets', []):
+                 if ipset['Name'] == ipset_name:
+                  ipset_id = ipset['Id']
+                  break
+
+                if ipset_id:
+                 # Get IP Set details for lock token
+                 ipset_resp = waf.get_ip_set(
+                     Name=ipset_name,
+                     Scope=p.get('Scope','REGIONAL'),
+                     Id=ipset_id
+                 )
+
+                 # Delete IP Set
+                 waf.delete_ip_set(
+                     Name=ipset_name,
+                     Scope=p.get('Scope','REGIONAL'),
+                     Id=ipset_id,
+                     LockToken=ipset_resp['LockToken']
+                 )
+                 logger.info(f"[{request_id}] IP Set deleted successfully")
+                 scope = p.get('Scope','REGIONAL')
+                 name = p.get('Name') or f"{e.get('StackId','stack').split('/')[-1]}-webacl"
+                 waf = boto3.client('wafv2', region_name=os.environ.get('AWS_REGION') or os.environ.get('REGION'))
+                 webacl_id = (e.get('PhysicalResourceId') or e.get('ResourceProperties', {}).get('WebACLId') or p.get('WebACLId'))
+                 if not webacl_id:
+                     try:
+                         pager = waf.get_paginator('list_web_acls')
+                         for page in pager.paginate(Scope=scope):
+                             for s in page.get('WebACLs', []):
+                                 if s.get('Name') == name:
+                                     webacl_id = s['Id']; break
+                             if webacl_id: break
+                     except Exception as ex:
+                         logger.warning(f"[{request_id}] list_web_acls failed: {ex}")
+                 if webacl_id:
+                     try:
+                         gw = waf.get_web_acl(Name=name, Scope=scope, Id=webacl_id)
+                         lock = gw['LockToken']
+                         for attempt in range(6):
+                             try:
+                                 waf.delete_web_acl(Name=name, Scope=scope, Id=webacl_id, LockToken=lock)
+                                 break
+                             except waf.exceptions.WAFConflictException as ex:
+                                 time.sleep(1 + attempt)
+                     except waf.exceptions.WAFNonexistentItemException:
+                         logger.info(f"[{request_id}] WebACL not found on delete")
+                     except Exception as ex:
+                         logger.warning(f"[{request_id}] Get/Delete WebACL error: {ex}")
+                 try:
+                     ipset_name = f"{p['Name']}-ipset",
+                     ls = waf.list_ip_sets(Scope=scope)
+                     target = next((x for x in ls.get('IPSets', []) if x['Name'] == ipset_name), None)
+                     if target:
+                         ip = waf.get_ip_set(Name=ipset_name, Scope=scope, Id=target['Id'])
+                         waf.delete_ip_set(Name=ipset_name, Scope=scope, Id=target['Id'], LockToken=ip['LockToken'])
+                 except waf.exceptions.WAFNonexistentItemException:
+                     pass
+                 return send_response(e,c,'SUCCESS','WAF deleted')
+                else:
+                 logger.info(f"[{request_id}] IP Set {ipset_name} not found")
+
+               except ClientError as ipset_ex:
+                if ipset_ex.response['Error']['Code'] == 'WAFNonexistentItemException':
+                 logger.info(f"[{request_id}] IP Set not found (already deleted or never created)")
+                else:
+                 logger.warning(f"[{request_id}] Could not delete IP Set: {str(ipset_ex)}")
+               except Exception as ipset_ex:
+                logger.warning(f"[{request_id}] Unexpected error deleting IP Set: {str(ipset_ex)}")
+
+              except ClientError as ex:
+               error_code = ex.response['Error']['Code']
+               if error_code == 'WAFNonexistentItemException':
+                logger.info(f"[{request_id}] WebACL not found (already deleted)")
+               elif error_code == 'AccessDeniedException':
+                logger.error(f"[{request_id}] Access denied when deleting WebACL. This may be due to missing permissions or invalid WebACL ID format.")
+                logger.error(f"[{request_id}] WebACL ID: {webacl_id}, Scope: {p.get('Scope','REGIONAL')}")
+                # Continue with success since the resource might not exist or be accessible
+               else:
+                logger.error(f"[{request_id}] Error deleting WebACL: {str(ex)}")
+                # Don't fail the deletion - log and continue
+              except Exception as ex:
+               logger.error(f"[{request_id}] Unexpected error during WebACL deletion: {str(ex)}")
+               # Don't fail the deletion - log and continue
+             else:
+              logger.info(f"[{request_id}] No WebACL ID to delete")
+
+             return send_response(e,c,'SUCCESS','WAF deleted')
+
+            else:
+             logger.info(f"[{request_id}] WAF update operation (no-op)")
+             return send_response(e,c,'SUCCESS','WAF update',e['PhysicalResourceId'])
+
+           except Exception as ex:
+            error_msg = f"WAF error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] WAF traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+          def handle_cognito_secret(e,c):
+           """Enhanced Cognito secret handler with comprehensive error handling"""
+           request_id = e.get('RequestId', 'unknown')
+           rt,p = e['RequestType'],e['ResourceProperties']
+
+           logger.info(f"[{request_id}] Cognito Secret operation: {rt}")
+
+           try:
+            if rt == 'Create' or rt == 'Update':
+             logger.info(f"[{request_id}] Managing Cognito client secret for UserPool: {p['UserPoolId']}")
+
+             cognito = boto3.client('cognito-idp')
+             secrets = boto3.client('secretsmanager')
+
+             # Get client secret from Cognito
+             try:
+              resp = cognito.describe_user_pool_client(
+                  UserPoolId=p['UserPoolId'],
+                  ClientId=p['ClientId']
+              )
+              secret = resp['UserPoolClient'].get('ClientSecret')
+
+              if not secret:
+               raise ValueError('Cognito App Client does not have a client secret configured')
+
+              logger.info(f"[{request_id}] Retrieved client secret from Cognito")
+
+             except ClientError as cognito_ex:
+              error_msg = f"Failed to retrieve Cognito client secret: {str(cognito_ex)}"
+              logger.error(f"[{request_id}] {error_msg}")
+              raise ValueError(error_msg)
+
+             # Prepare secret value
+             secret_val = {
+                 'client_id': p['ClientId'],
+                 'client_secret': secret,
+                 'user_pool_id': p['UserPoolId'],
+                 'resource_server_identifier': p.get('ResourceServerIdentifier', 'api'),
+                 'scope': p.get('Scope', 'm2m')
+             }
+
+             # Store or update secret in Secrets Manager
+             try:
+              logger.info(f"[{request_id}] Updating secret in Secrets Manager: {p['SecretName']}")
+              secrets.update_secret(
+                  SecretId=p['SecretName'],
+                  SecretString=json.dumps(secret_val),
+                  Description=f"Cognito App Client credentials for {p['ClientId']}"
+              )
+              logger.info(f"[{request_id}] Secret updated successfully")
+
+             except ClientError as ex:
+              if ex.response['Error']['Code'] == 'ResourceNotFoundException':
+               logger.info(f"[{request_id}] Secret not found, creating new secret: {p['SecretName']}")
+
+               try:
+                secrets.create_secret(
+                    Name=p['SecretName'],
+                    SecretString=json.dumps(secret_val),
+                    Description=f"Cognito App Client credentials for {p['ClientId']}"
+                )
+                logger.info(f"[{request_id}] Secret created successfully")
+
+               except ClientError as create_ex:
+                error_msg = f"Failed to create secret: {str(create_ex)}"
+                logger.error(f"[{request_id}] {error_msg}")
+                raise ValueError(error_msg)
+              else:
+               error_msg = f"Failed to update secret: {str(ex)}"
+               logger.error(f"[{request_id}] {error_msg}")
+               raise ValueError(error_msg)
+
+             # Generate proper secret ARN
+             region = os.environ.get('REGION', 'us-east-1')
+             account_id = c.invoked_function_arn.split(':')[4] if c else '123456789012'
+             secret_arn = f"arn:aws:secretsmanager:{region}:{account_id}:secret:{p['SecretName']}"
+
+             logger.info(f"[{request_id}] Cognito secret operation completed successfully")
+             return send_response(e,c,'SUCCESS','Secret updated',f"secret-{p['ClientId']}",{
+                 'SecretName': p['SecretName'],
+                 'SecretArn': secret_arn,
+                 'ClientId': p['ClientId']
+             })
+
+            else:
+             logger.info(f"[{request_id}] Cognito secret delete operation (no-op)")
+             return send_response(e,c,'SUCCESS','Secret delete',e.get('PhysicalResourceId','deleted'))
+
+           except Exception as ex:
+            error_msg = f"Secret error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] Secret traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+
+          def handle_route53_dns(e,c):
+           """Enhanced Route53 DNS handler with automatic hosted zone discovery"""
+           request_id = e.get('RequestId', 'unknown')
+           request_type = e.get('RequestType', 'Unknown')
+           p = e.get('ResourceProperties', {})
+
+           logger.info(f"[{request_id}] Route53 DNS operation: {request_type}")
+
+           try:
+            domain_name = p.get('DomainName', '').strip()
+            alb_dns_name = p.get('ALBDNSName', '').strip()
+
+            if not domain_name:
+             return send_response(e,c,'FAILED','DomainName is required for Route53 DNS operations')
+
+            if not alb_dns_name:
+             return send_response(e,c,'FAILED','ALBDNSName is required for Route53 DNS operations')
+
+            route53 = boto3.client('route53')
+
+            if request_type in ['Create', 'Update']:
+             logger.info(f"[{request_id}] Creating/updating DNS records for domain: {domain_name}")
+
+             # Auto-discover hosted zone for the domain
+             hosted_zone_id = None
+             hosted_zone_name = None
+
+             # Try to find hosted zone by checking domain and parent domains
+             domain_parts = domain_name.split('.')
+             for i in range(len(domain_parts)):
+              test_domain = '.'.join(domain_parts[i:]) + '.'
+              logger.info(f"[{request_id}] Checking for hosted zone: {test_domain}")
+
+              try:
+               response = route53.list_hosted_zones_by_name(DNSName=test_domain, MaxItems='1')
+               if response['HostedZones']:
+                zone = response['HostedZones'][0]
+                if zone['Name'] == test_domain:
+                 hosted_zone_id = zone['Id'].split('/')[-1]  # Remove /hostedzone/ prefix
+                 hosted_zone_name = zone['Name']
+                 logger.info(f"[{request_id}] Found hosted zone: {hosted_zone_id} for {hosted_zone_name}")
+                 break
+              except Exception as ex:
+               logger.warning(f"[{request_id}] Error checking hosted zone for {test_domain}: {str(ex)}")
+               continue
+
+             if not hosted_zone_id:
+              return send_response(e,c,'FAILED',f'No hosted zone found for domain {domain_name} or its parent domains')
+
+             # Create DNS records
+             record_changes = []
+
+             # Main A record ALIAS for the domain (pointing to ALB)
+             # Extract ALB hosted zone ID from ALB DNS name
+             alb_region = alb_dns_name.split('.')[1]  # Extract region from ALB DNS
+             alb_hosted_zone_map = {
+              'us-east-1': 'Z35SXDOTRQ7X7K',
+              'us-east-2': 'Z3AADJGX6KTTL2', 
+              'us-west-1': 'Z368ELLRRE2KJ0',
+              'us-west-2': 'Z1H1FL5HABSF5',
+              'eu-west-1': 'Z32O12XQLNTSW2',
+              'eu-west-2': 'ZHURV8PSTC4K8',
+              'eu-central-1': 'Z3F0SRJ5LGBH90',
+              'ap-southeast-1': 'Z1LMS91P8CMLE5',
+              'ap-southeast-2': 'Z1GM3OXH4ZPM65',
+              'ap-northeast-1': 'Z14GRHDCWA56QT'
+             }
+             alb_hosted_zone_id = alb_hosted_zone_map.get(alb_region, 'Z35SXDOTRQ7X7K')  # Default to us-east-1
+
+             record_changes.append({
+              'Action': 'UPSERT',
+              'ResourceRecordSet': {
+               'Name': domain_name,
+               'Type': 'A',
+               'AliasTarget': {
+                'DNSName': alb_dns_name,
+                'EvaluateTargetHealth': True,
+                'HostedZoneId': alb_hosted_zone_id
+               }
+              }
+             })
+
+             # Create the change batch
+             change_batch = {
+              'Comment': f'Tolling Vision DNS records for {domain_name}',
+              'Changes': record_changes
+             }
+
+             # Submit the change
+             response = route53.change_resource_record_sets(
+              HostedZoneId=hosted_zone_id,
+              ChangeBatch=change_batch
+             )
+
+             change_id = response['ChangeInfo']['Id']
+             logger.info(f"[{request_id}] DNS change submitted: {change_id}")
+
+             # Wait for change to propagate (with timeout)
+             waiter = route53.get_waiter('resource_record_sets_changed')
+             try:
+              waiter.wait(
+               Id=change_id,
+               WaiterConfig={'Delay': 10, 'MaxAttempts': 30}  # 5 minutes max
+              )
+              logger.info(f"[{request_id}] DNS change propagated successfully")
+             except Exception as ex:
+              logger.warning(f"[{request_id}] DNS change may still be propagating: {str(ex)}")
+
+             return send_response(e,c,'SUCCESS',f'DNS records created for {domain_name}',f'{hosted_zone_id}:{domain_name}',{
+              'HostedZoneId': hosted_zone_id,
+              'HostedZoneName': hosted_zone_name,
+              'DomainName': domain_name,
+              'ALBDNSName': alb_dns_name,
+              'ChangeId': change_id
+             })
+
+            elif request_type == 'Delete':
+             logger.info(f"[{request_id}] Deleting DNS records for domain: {domain_name}")
+
+             # Extract hosted zone ID from physical resource ID
+             physical_id = e.get('PhysicalResourceId', '')
+             if ':' in physical_id:
+              hosted_zone_id = physical_id.split(':')[0]
+             else:
+              # Try to discover hosted zone again for cleanup
+              domain_parts = domain_name.split('.')
+              for i in range(len(domain_parts)):
+               test_domain = '.'.join(domain_parts[i:]) + '.'
+               try:
+                response = route53.list_hosted_zones_by_name(DNSName=test_domain, MaxItems='1')
+                if response['HostedZones'] and response['HostedZones'][0]['Name'] == test_domain:
+                 hosted_zone_id = response['HostedZones'][0]['Id'].split('/')[-1]
+                 break
+               except:
+                continue
+
+             if hosted_zone_id:
+              try:
+               # Delete the A record ALIAS
+               # Extract ALB hosted zone ID from ALB DNS name for deletion
+               alb_region = alb_dns_name.split('.')[1] if '.' in alb_dns_name else 'us-east-1'
+               alb_hosted_zone_map = {
+                'us-east-1': 'Z35SXDOTRQ7X7K',
+                'us-east-2': 'Z3AADJGX6KTTL2', 
+                'us-west-1': 'Z368ELLRRE2KJ0',
+                'us-west-2': 'Z1H1FL5HABSF5',
+                'eu-west-1': 'Z32O12XQLNTSW2',
+                'eu-west-2': 'ZHURV8PSTC4K8',
+                'eu-central-1': 'Z3F0SRJ5LGBH90',
+                'ap-southeast-1': 'Z1LMS91P8CMLE5',
+                'ap-southeast-2': 'Z1GM3OXH4ZPM65',
+                'ap-northeast-1': 'Z14GRHDCWA56QT'
+               }
+               alb_hosted_zone_id = alb_hosted_zone_map.get(alb_region, 'Z35SXDOTRQ7X7K')
+
+               route53.change_resource_record_sets(
+                HostedZoneId=hosted_zone_id,
+                ChangeBatch={
+                 'Comment': f'Delete Tolling Vision DNS records for {domain_name}',
+                 'Changes': [{
+                  'Action': 'DELETE',
+                  'ResourceRecordSet': {
+                   'Name': domain_name,
+                   'Type': 'A',
+                   'AliasTarget': {
+                    'DNSName': alb_dns_name,
+                    'EvaluateTargetHealth': True,
+                    'HostedZoneId': alb_hosted_zone_id
+                   }
+                  }
+                 }]
+                }
+               )
+               logger.info(f"[{request_id}] DNS records deleted successfully")
+              except Exception as ex:
+               logger.warning(f"[{request_id}] Error deleting DNS records (may not exist): {str(ex)}")
+
+             return send_response(e,c,'SUCCESS',f'DNS records deleted for {domain_name}',physical_id)
+
+            else:
+             return send_response(e,c,'SUCCESS',f'No action needed for {request_type}',e.get('PhysicalResourceId','noop'))
+
+           except Exception as ex:
+            error_msg = f"Route53 DNS error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] Route53 DNS traceback: {traceback.format_exc()}")
+            return send_response(e,c,'FAILED',error_msg)
+
+          def handle_stack_cleanup(e,c):
+           """Enhanced stack cleanup handler for resources not automatically cleaned by CloudFormation"""
+           request_id = e.get('RequestId', 'unknown')
+           request_type = e.get('RequestType', 'Unknown')
+           p = e.get('ResourceProperties', {})
+
+           logger.info(f"[{request_id}] Stack cleanup operation: {request_type}")
+
+           try:
+            stack_name = p.get('StackName', '')
+            region = p.get('Region', '')
+
+            if request_type == 'Delete':
+             logger.info(f"[{request_id}] Performing stack cleanup for: {stack_name}")
+
+             cleanup_results = []
+
+             # 1. Clean up any orphaned WAF resources
+             try:
+              waf_client = boto3.client('wafv2', region_name=region)
+
+              # List all WebACLs and find ones matching our patterns
+              webacls_to_delete = []
+
+              try:
+               response = waf_client.list_web_acls(Scope='REGIONAL')
+               for webacl in response.get('WebACLs', []):
+                webacl_name = webacl['Name']
+                # Check if WebACL matches our patterns
+                if (f'{stack_name}-webacl' == webacl_name or
+                    ('serverlessrepo-' in webacl_name and 'webacl' in webacl_name)):
+                 webacls_to_delete.append(webacl)
+                 logger.info(f"[{request_id}] Found WebACL to delete: {webacl_name} ({webacl['Id']})")
+              except Exception as list_waf_ex:
+               logger.error(f"[{request_id}] Error listing WebACLs: {str(list_waf_ex)}")
+
+              for webacl in webacls_to_delete:
+               try:
+                webacl_name = webacl['Name']
+                webacl_id = webacl['Id']
+                logger.info(f"[{request_id}] Attempting to delete WAF WebACL: {webacl_name}")
+
+                # Get WebACL details for lock token (use Id only, not Name)
+                webacl_details = waf_client.get_web_acl(
+                 Scope='REGIONAL',
+                 Id=webacl_id,
+                 Name=webacl_name
+                )
+
+                # Delete the WebACL
+                waf_client.delete_web_acl(
+                 Scope='REGIONAL',
+                 Id=webacl_id,
+                 LockToken=webacl_details['LockToken']
+                )
+                logger.info(f"[{request_id}] Successfully deleted WebACL: {webacl_name}")
+                cleanup_results.append(f"Deleted WebACL: {webacl_name}")
+
+               except Exception as waf_ex:
+                logger.warning(f"[{request_id}] Could not delete WAF WebACL {webacl_name}: {str(waf_ex)}")
+                cleanup_results.append(f"Failed to delete WebACL {webacl_name}: {str(waf_ex)}")
+
+             except Exception as waf_ex:
+              logger.error(f"[{request_id}] Error during WAF cleanup: {str(waf_ex)}")
+              cleanup_results.append(f"WAF cleanup error: {str(waf_ex)}")
+
+             # 2. Clean up any orphaned IP Sets
+             try:
+              waf_client = boto3.client('wafv2', region_name=region)
+
+              # List all IP Sets and find ones matching our patterns
+              ipsets_to_delete = []
+
+              try:
+               response = waf_client.list_ip_sets(Scope='REGIONAL')
+               for ipset in response.get('IPSets', []):
+                ipset_name = ipset['Name']
+                # Check if IP Set matches our patterns
+                if (f'{stack_name}-webacl-ipset' == ipset_name or
+                    ('serverlessrepo-' in ipset_name and 'ipset' in ipset_name)):
+                 ipsets_to_delete.append(ipset)
+                 logger.info(f"[{request_id}] Found IP Set to delete: {ipset_name} ({ipset['Id']})")
+              except Exception as list_ipset_ex:
+               logger.error(f"[{request_id}] Error listing IP Sets: {str(list_ipset_ex)}")
+
+              for ipset in ipsets_to_delete:
+               try:
+                ipset_name = ipset['Name']
+                ipset_id = ipset['Id']
+                logger.info(f"[{request_id}] Attempting to delete WAF IP Set: {ipset_name}")
+
+                ipset_details = waf_client.get_ip_set(
+                 Scope='REGIONAL',
+                 Id=ipset_id
+                )
+
+                waf_client.delete_ip_set(
+                 Scope='REGIONAL',
+                 Id=ipset_id,
+                 LockToken=ipset_details['LockToken']
+                )
+                logger.info(f"[{request_id}] Successfully deleted IP Set: {ipset_name}")
+                cleanup_results.append(f"Deleted IP Set: {ipset_name}")
+
+               except Exception as ipset_ex:
+                logger.warning(f"[{request_id}] Could not delete IP Set {ipset_name}: {str(ipset_ex)}")
+                cleanup_results.append(f"Failed to delete IP Set {ipset_name}: {str(ipset_ex)}")
+
+             except Exception as ipset_ex:
+              logger.error(f"[{request_id}] Error during IP Set cleanup: {str(ipset_ex)}")
+              cleanup_results.append(f"IP Set cleanup error: {str(ipset_ex)}")
+
+             # Note: Lambda function's own log group will be cleaned up by CloudFormation
+             # since we set DeletionPolicy: Retain, it will be handled by the cleanup patterns above
+
+             logger.info(f"[{request_id}] Stack cleanup completed. Results: {cleanup_results}")
+
+             return send_response(e,c,'SUCCESS',f'Stack cleanup completed: {len(cleanup_results)} operations',f'cleanup-{stack_name}',{
+              'CleanupResults': cleanup_results,
+              'StackName': stack_name
+             })
+
+            elif request_type in ['Create', 'Update']:
+             logger.info(f"[{request_id}] Stack cleanup resource created/updated (no action needed)")
+             return send_response(e,c,'SUCCESS',f'Stack cleanup resource ready',f'cleanup-{stack_name}')
+
+            else:
+             return send_response(e,c,'SUCCESS',f'No action needed for {request_type}',e.get('PhysicalResourceId','noop'))
+
+           except Exception as ex:
+            error_msg = f"Stack cleanup error: {str(ex)}"
+            logger.error(f"[{request_id}] {error_msg}")
+            logger.error(f"[{request_id}] Stack cleanup traceback: {traceback.format_exc()}")
+            # Don't fail the stack deletion due to cleanup issues
+            return send_response(e,c,'SUCCESS',f'Stack cleanup completed with errors: {str(ex)}')
+
+          def handle_purge_s3_bucket_on_delete(e, c):
+           """
+           Purges (empties) an S3 bucket (including versions and delete markers) and deletes the bucket
+           when the Custom Resource request type is 'Delete'.
+           Expects: ResourceProperties.BucketName
+           """
+           request_id = e.get('RequestId', 'unknown')
+           request_type = e.get('RequestType', 'Unknown')
+           p = e.get('ResourceProperties', {})
+           bucket_name = p.get('BucketName')
+
+           if not bucket_name:
+               return send_response(e, c, 'FAILED', 'BucketName is required for PurgeS3BucketOnDelete')
+
+           logger.info(f"[{request_id}] PurgeS3BucketOnDelete invoked for bucket: {bucket_name} (request: {request_type})")
+
+           try:
+               if request_type != 'Delete':
+                   return send_response(e, c, 'SUCCESS', f'No action for {request_type}', e.get('PhysicalResourceId','noop'))
+
+               s3 = boto3.client('s3', region_name=os.environ.get('AWS_REGION', os.environ.get('REGION')))
+
+               try:
+                   paginator = s3.get_paginator('list_object_versions')
+                   to_delete = {'Objects': []}
+
+                   for page in paginator.paginate(Bucket=bucket_name):
+                       for v in page.get('Versions', []):
+                           to_delete['Objects'].append({'Key': v['Key'], 'VersionId': v['VersionId']})
+                           if len(to_delete['Objects']) == 1000:
+                               s3.delete_objects(Bucket=bucket_name, Delete=to_delete)
+                               to_delete = {'Objects': []}
+
+                       for m in page.get('DeleteMarkers', []):
+                           to_delete['Objects'].append({'Key': m['Key'], 'VersionId': m['VersionId']})
+                           if len(to_delete['Objects']) == 1000:
+                               s3.delete_objects(Bucket=bucket_name, Delete=to_delete)
+                               to_delete = {'Objects': []}
+
+                   if to_delete['Objects']:
+                       s3.delete_objects(Bucket=bucket_name, Delete=to_delete)
+               except Exception as ex:
+                   logger.warning(f"[{request_id}] list_object_versions failed or bucket not versioned: {str(ex)}; falling back to ListObjectsV2")
+
+                   paginator = s3.get_paginator('list_objects_v2')
+                   to_delete = {'Objects': []}
+                   for page in paginator.paginate(Bucket=bucket_name):
+                       for obj in page.get('Contents', []):
+                           to_delete['Objects'].append({'Key': obj['Key']})
+                           if len(to_delete['Objects']) == 1000:
+                               s3.delete_objects(Bucket=bucket_name, Delete=to_delete)
+                               to_delete = {'Objects': []}
+                   if to_delete['Objects']:
+                       s3.delete_objects(Bucket=bucket_name, Delete=to_delete)
+
+               try:
+                   s3.delete_bucket(Bucket=bucket_name)
+                   logger.info(f"[{request_id}] Bucket deleted: {bucket_name}")
+               except Exception as ex:
+                   logger.warning(f"[{request_id}] Bucket delete warning for {bucket_name}: {str(ex)}")
+
+               return send_response(e, c, 'SUCCESS', f'Purged and deleted bucket: {bucket_name}')
+
+           except Exception as ex:
+               logger.error(f"[{request_id}] PurgeS3BucketOnDelete error: {str(ex)}")
+               logger.error(f"[{request_id}] Traceback: {traceback.format_exc()}")
+               return send_response(e, c, 'SUCCESS', f'Cleanup completed with errors for {bucket_name}: {str(ex)}')
+
+          def send_response(e,c,status,reason,physical_resource_id=None,data=None):
+           """Enhanced CloudFormation response function with comprehensive error handling"""
+           request_id = e.get('RequestId', 'unknown')
+
+           # Prepare response body
+           rb = {
+               'Status': status,
+               'Reason': reason,
+               'PhysicalResourceId': physical_resource_id or (c.log_stream_name if c else 'unknown'),
+               'StackId': e['StackId'],
+               'RequestId': e['RequestId'],
+               'LogicalResourceId': e['LogicalResourceId'],
+               'Data': data or {}
+           }
+
+           logger.info(f"[{request_id}] Sending CloudFormation response: {status} - {reason}")
+
+           # Send response to CloudFormation
+           try:
+            response_body = json.dumps(rb)
+            logger.info(f"[{request_id}] Response body size: {len(response_body)} bytes")
+
+            request = urllib.request.Request(
+                e['ResponseURL'],
+                data=response_body.encode('utf-8'),
+                headers={'content-type': ''},
+                method='PUT'
+            )
+
+            with urllib.request.urlopen(request, timeout=30) as response:
+             response_code = response.getcode()
+             logger.info(f"[{request_id}] CloudFormation response sent successfully: HTTP {response_code}")
+
+           except urllib.error.HTTPError as http_ex:
+            logger.error(f"[{request_id}] HTTP error sending CloudFormation response: {http_ex.code} - {http_ex.reason}")
+            logger.error(f"[{request_id}] Response URL: {e.get('ResponseURL', 'unknown')}")
+           except urllib.error.URLError as url_ex:
+            logger.error(f"[{request_id}] URL error sending CloudFormation response: {str(url_ex)}")
+           except Exception as ex:
+            logger.error(f"[{request_id}] Unexpected error sending CloudFormation response: {str(ex)}")
+
+           return rb
+
+  PurgeAlbAccessLogsOnDelete:
+    Type: Custom::StackHelper
+    Condition: EnableALBLogs
+    Properties:
+      ServiceToken: !GetAtt TollingVisionCustomResourceHandler.Arn
+      ResourceType: "PurgeS3BucketOnDelete"
+      BucketName: !Ref ALBAccessLogsBucket
+    DependsOn:
+      - ApplicationLoadBalancerWithLogs
+      - ALBAccessLogsBucketPolicy
+
+  # ========================================
+  # Application Load Balancer
+  # ========================================
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: NoALBLogs
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+        - Key: routing.http2.enabled
+          Value: "true"
+        - Key: access_logs.s3.enabled
+          Value: "false"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-alb"
+        - Key: Environment
+          Value: !Ref "AWS::StackName"
+
+  ApplicationLoadBalancerWithLogs:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: EnableALBLogs
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+        - Key: routing.http2.enabled
+          Value: "true"
+        - Key: access_logs.s3.enabled
+          Value: "true"
+        - Key: access_logs.s3.bucket
+          Value: !Ref ALBAccessLogsBucket
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-alb"
+        - Key: Environment
+          Value: !Ref "AWS::StackName"
+
+  HTTPTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Protocol: HTTP
+      Port: 80
+      VpcId: !Ref VPC
+      HealthCheckIntervalSeconds: 60
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: 200,415
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref HTTPTargetGroup
+      LoadBalancerArn:
+        !If [
+          EnableALBLogs,
+          !Ref ApplicationLoadBalancerWithLogs,
+          !Ref ApplicationLoadBalancer,
+        ]
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: 443
+            StatusCode: HTTP_301
+      LoadBalancerArn:
+        !If [
+          EnableALBLogs,
+          !Ref ApplicationLoadBalancerWithLogs,
+          !Ref ApplicationLoadBalancer,
+        ]
+      Port: 80
+      Protocol: HTTP
+
+  HTTPListenerDirect:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: NoCertificate
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref HTTPTargetGroup
+      LoadBalancerArn:
+        !If [
+          EnableALBLogs,
+          !Ref ApplicationLoadBalancerWithLogs,
+          !Ref ApplicationLoadBalancer,
+        ]
+      Port: 80
+      Protocol: HTTP
+
+  # ========================================
+  # Custom Resources
+  # ========================================
+
+  CustomAutoScalingGroup:
+    Type: Custom::AutoScaling
+    Properties:
+      ServiceToken: !GetAtt TollingVisionCustomResourceHandler.Arn
+      ResourceType: "AutoScaling"
+      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      LaunchTemplateName: !Sub "${AWS::StackName}-launch-template"
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      TargetGroupARNs:
+        - !Ref HTTPTargetGroup
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      # Container Configuration Parameters
+      LicenseKey: !Ref LicenseKey
+      ProcessCount: !Ref ProcessCount
+      ConcurrentRequestCount: !Ref ConcurrentRequestCount
+      MaxRequestSize: !Ref MaxRequestSize
+      Backlog: !Ref Backlog
+      BacklogTimeout: !Ref BacklogTimeout
+      RequestTimeout: !Ref RequestTimeout
+      ImageArchitecture: !Ref ImageArchitecture
+      ImageTag: !Ref ImageTag
+      # JWT Authentication Parameters (optional - passed as container environment variables)
+      CognitoUserPoolId: !Ref CognitoUserPoolId
+      CognitoRegion: !Ref CognitoRegion
+      CognitoAppClientId: !Ref CognitoAppClientId
+      CognitoRequiredScope: !Ref CognitoRequiredScope
+      # Infrastructure Parameters
+      InstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref "AWS::NoValue"]
+      # CloudWatch Logs Configuration
+      LogGroupName: !Ref ContainerLogGroup
+      Region: !Ref "AWS::Region"
+      StackName: !Ref "AWS::StackName"
+
+  CustomWAF:
+    Type: Custom::WAF
+    Condition: EnableWAFProtection
+    Properties:
+      ServiceToken: !GetAtt TollingVisionCustomResourceHandler.Arn
+      ResourceType: "WAF"
+      Name: !Sub "${AWS::StackName}-webacl"
+      Scope: "REGIONAL"
+      EnableAWSManagedRules: !Ref EnableAWSManagedRules
+      AllowedIpCidrs: !If
+        - HasAllowedIPs
+        - !Ref AllowedIpCidrs
+        - []
+
+  CustomRoute53DNS:
+    Type: Custom::Route53DNS
+    Condition: EnableDNSManagement
+    Properties:
+      ServiceToken: !GetAtt TollingVisionCustomResourceHandler.Arn
+      ResourceType: "Route53DNS"
+      DomainName: !Ref DomainName
+      ALBDNSName:
+        !If [
+          EnableALBLogs,
+          !GetAtt ApplicationLoadBalancerWithLogs.DNSName,
+          !GetAtt ApplicationLoadBalancer.DNSName,
+        ]
+
+  ContainerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/ec2/tolling-vision/${AWS::StackName}"
+      RetentionInDays: !Ref CloudWatchLogRetentionDays
+
+  # ========================================
+  # Lambda Custom Resource Log Group
+  # ========================================
+
+  LambdaCustomResourceLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-custom-resource-handler"
+      RetentionInDays: 14
+    DependsOn:
+      - TollingVisionCustomResourceHandler
+
+  # ========================================
+  # SNS Topics for Critical Alerts
+  # ========================================
+
+  CriticalAlertsTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableSNSNotificationsCondition
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-critical-alerts"
+      DisplayName: !Sub "Tolling Vision Critical Alerts - ${AWS::StackName}"
+      KmsMasterKeyId: alias/aws/sns
+
+  CriticalAlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableSNSNotificationsCondition
+    Properties:
+      TopicArn: !Ref CriticalAlertsTopic
+      Protocol: email
+      Endpoint: !Ref SNSNotificationEmail
+
+  # ========================================
+  # Custom Metrics for Application Monitoring
+  # ========================================
+
+  # Custom metric filter for container startup events
+  ContainerStartupMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: EnableCustomMetricsCondition
+    Properties:
+      LogGroupName: !Ref ContainerLogGroup
+      FilterPattern: '[timestamp, level="INFO", message="Container started successfully"]'
+      MetricTransformations:
+        - MetricNamespace: TollingVision/Application
+          MetricName: ContainerStartups
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # Custom metric filter for license validation events
+  LicenseValidationMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: EnableCustomMetricsCondition
+    Properties:
+      LogGroupName: !Ref ContainerLogGroup
+      FilterPattern: '[timestamp, level="INFO", message="License validation successful"]'
+      MetricTransformations:
+        - MetricNamespace: TollingVision/Application
+          MetricName: LicenseValidations
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # Custom metric filter for processing requests
+  ProcessingRequestsMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: EnableCustomMetricsCondition
+    Properties:
+      LogGroupName: !Ref ContainerLogGroup
+      FilterPattern: '[timestamp, level="INFO", message="Processing request", requestId]'
+      MetricTransformations:
+        - MetricNamespace: TollingVision/Application
+          MetricName: ProcessingRequests
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # Custom metric filter for processing errors
+  ProcessingErrorsMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: EnableCustomMetricsCondition
+    Properties:
+      LogGroupName: !Ref ContainerLogGroup
+      FilterPattern: '[timestamp, level="ERROR", message="Processing failed", requestId]'
+      MetricTransformations:
+        - MetricNamespace: TollingVision/Application
+          MetricName: ProcessingErrors
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # ========================================
+  # CloudWatch Alarms for System Health Monitoring
+  # ========================================
+
+  # Lambda Function Error Alarm
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-errors"
+      AlarmDescription: "Lambda custom resource function errors"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref TollingVisionCustomResourceHandler
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [
+            EnableSNSNotificationsCondition,
+            !Ref CriticalAlertsTopic,
+            !Ref "AWS::NoValue",
+          ]
+
+  # Lambda Function Duration Alarm (near timeout)
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-duration"
+      AlarmDescription: "Lambda custom resource function approaching timeout"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 800000 # 800 seconds (13.3 minutes) out of 870 seconds (14.5 minutes)
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref TollingVisionCustomResourceHandler
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [
+            EnableSNSNotificationsCondition,
+            !Ref CriticalAlertsTopic,
+            !Ref "AWS::NoValue",
+          ]
+
+  # ALB Target Health Alarm
+  ALBUnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-alb-unhealthy-targets"
+      AlarmDescription: "ALB has unhealthy targets"
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value:
+            !If [
+              EnableALBLogs,
+              !GetAtt ApplicationLoadBalancerWithLogs.LoadBalancerFullName,
+              !GetAtt ApplicationLoadBalancer.LoadBalancerFullName,
+            ]
+      TreatMissingData: breaching
+      AlarmActions:
+        - !If [
+            EnableSNSNotificationsCondition,
+            !Ref CriticalAlertsTopic,
+            !Ref "AWS::NoValue",
+          ]
+
+  # ALB Response Time Alarm
+  ALBResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-alb-response-time"
+      AlarmDescription: "ALB response time is high"
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5.0 # 5 seconds
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value:
+            !If [
+              EnableALBLogs,
+              !GetAtt ApplicationLoadBalancerWithLogs.LoadBalancerFullName,
+              !GetAtt ApplicationLoadBalancer.LoadBalancerFullName,
+            ]
+      TreatMissingData: notBreaching
+
+  # Auto Scaling Group Instance Health Alarm
+  ASGInstancesInServiceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: CreateAutoScalingResource
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-asg-no-instances"
+      AlarmDescription: "Auto Scaling Group has no instances in service"
+      MetricName: GroupInServiceInstances
+      Namespace: AWS/AutoScaling
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Sub "${AWS::StackName}-asg"
+      TreatMissingData: breaching
+      AlarmActions:
+        - !If [
+            EnableSNSNotificationsCondition,
+            !Ref CriticalAlertsTopic,
+            !Ref "AWS::NoValue",
+          ]
+
+  # Container Log Error Pattern Alarm
+  ContainerErrorLogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-container-errors"
+      AlarmDescription: "Container error patterns detected in logs"
+      MetricName: ErrorCount
+      Namespace: !Sub "${AWS::StackName}/ContainerLogs"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [
+            EnableSNSNotificationsCondition,
+            !Ref CriticalAlertsTopic,
+            !Ref "AWS::NoValue",
+          ]
+
+  # ========================================
+  # CloudWatch Log Metric Filters for Error Detection
+  # ========================================
+
+  # Container Error Log Metric Filter
+  ContainerErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ContainerLogGroup
+      FilterPattern: '[timestamp, level="ERROR" || level="FATAL" || level="CRITICAL", ...]'
+      MetricTransformations:
+        - MetricNamespace: !Sub "${AWS::StackName}/ContainerLogs"
+          MetricName: ErrorCount
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # Lambda Custom Resource Error Metric Filter
+  LambdaErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LambdaCustomResourceLogGroup
+      FilterPattern: '[timestamp, level="ERROR", ...]'
+      MetricTransformations:
+        - MetricNamespace: !Sub "${AWS::StackName}/Lambda"
+          MetricName: CustomResourceErrors
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # Lambda Custom Resource Timeout Warning Filter
+  LambdaTimeoutWarningFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LambdaCustomResourceLogGroup
+      FilterPattern: '[timestamp, level, message="*timeout*" || message="*Remaining execution time*"]'
+      MetricTransformations:
+        - MetricNamespace: !Sub "${AWS::StackName}/Lambda"
+          MetricName: TimeoutWarnings
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # ========================================
+  # CloudWatch Dashboard for Operational Monitoring
+  # ========================================
+
+  TollingVisionDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: NoALBLogs
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-operational-dashboard"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}" ],
+                  [ ".", "TargetResponseTime", ".", "." ],
+                  [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Application Load Balancer Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", "${AWS::StackName}-asg" ],
+                  [ ".", "GroupDesiredCapacity", ".", "." ],
+                  [ ".", "GroupMinSize", ".", "." ],
+                  [ ".", "GroupMaxSize", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Auto Scaling Group Metrics",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${TollingVisionCustomResourceHandler}" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Invocations", ".", "." ],
+                  [ ".", "Throttles", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Custom Resource Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${ContainerLogGroup}' | fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 100",
+                "region": "${AWS::Region}",
+                "title": "Recent Container Errors",
+                "view": "table"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 18,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${TollingVisionCustomResourceHandler}' | fields @timestamp, @message\n| filter @message like /ERROR/ or @message like /FAILED/\n| sort @timestamp desc\n| limit 50",
+                "region": "${AWS::Region}",
+                "title": "Lambda Custom Resource Errors",
+                "view": "table"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "TollingVision/Application", "ContainerStartups" ],
+                  [ ".", "LicenseValidations" ],
+                  [ ".", "ProcessingRequests" ],
+                  [ ".", "ProcessingErrors" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Custom Application Metrics",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 30,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}" ]
+                ],
+                "view": "singleValue",
+                "region": "${AWS::Region}",
+                "title": "Healthy Targets",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 6,
+              "y": 30,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", "${AWS::StackName}-asg" ]
+                ],
+                "view": "singleValue",
+                "region": "${AWS::Region}",
+                "title": "Instances In Service",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 30,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "TollingVision/Application", "ProcessingRequests" ]
+                ],
+                "view": "singleValue",
+                "region": "${AWS::Region}",
+                "title": "Processing Requests (Last 5 min)",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 18,
+              "y": 30,
+              "width": 6,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "TollingVision/Application", "ProcessingErrors" ]
+                ],
+                "view": "singleValue",
+                "region": "${AWS::Region}",
+                "title": "Processing Errors (Last 5 min)",
+                "period": 300,
+                "stat": "Sum"
+              }
+            }
+          ]
+        }
+
+  TollingVisionDashboardWithLogs:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: EnableALBLogs
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-operational-dashboard"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${ApplicationLoadBalancerWithLogs.LoadBalancerFullName}" ],
+                  [ ".", "TargetResponseTime", ".", "." ],
+                  [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Application Load Balancer Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${TollingVisionCustomResourceHandler}" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Invocations", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Custom Resource Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${ContainerLogGroup}' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20",
+                "region": "${AWS::Region}",
+                "title": "Recent Container Errors",
+                "view": "table"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${TollingVisionCustomResourceHandler}' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20",
+                "region": "${AWS::Region}",
+                "title": "Lambda Custom Resource Errors",
+                "view": "table"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", "${ApplicationLoadBalancerWithLogs.LoadBalancerFullName}" ]
+                ],
+                "view": "singleValue",
+                "region": "${AWS::Region}",
+                "title": "Healthy Host Count",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "${CustomAutoScalingGroup.AutoScalingGroupName}" ],
+                  [ ".", "GroupInServiceInstances", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "title": "Auto Scaling Group Metrics",
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${CustomAutoScalingGroup.AutoScalingGroupName}" ]
+                ],
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "title": "EC2 CPU Utilization",
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 30,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "TollingVision/Application", "ErrorCount" ]
+                ],
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "title": "Application Error Count",
+                "period": 300,
+                "stat": "Sum"
+              }
+            }
+          ]
+        }
+
+  WAFAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: EnableWAFProtection
+    Properties:
+      ResourceArn:
+        !If [
+          EnableALBLogs,
+          !Ref ApplicationLoadBalancerWithLogs,
+          !Ref ApplicationLoadBalancer,
+        ]
+      WebACLArn: !GetAtt CustomWAF.WebACLArn
+
+  # ========================================
+  # Stack Cleanup Resource (ensures proper cleanup on deletion)
+  # ========================================
+
+  StackCleanupResource:
+    Type: Custom::StackCleanup
+    Properties:
+      ServiceToken: !GetAtt TollingVisionCustomResourceHandler.Arn
+      ResourceType: "StackCleanup"
+      StackName: !Ref "AWS::StackName"
+      Region: !Ref "AWS::Region"
+    DeletionPolicy: Delete
+
+Outputs:
+  # ========================================
+  # VPC and Networking Resource IDs
+  # ========================================
+
+  VpcId:
+    Description: "VPC ID for the Tolling Vision infrastructure"
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  PrivateSubnet1Id:
+    Description: "ID of Private Subnet 1 (AZ-a)"
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1Id"
+
+  PrivateSubnet2Id:
+    Description: "ID of Private Subnet 2 (AZ-b)"
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2Id"
+
+  PublicSubnet1Id:
+    Description: "ID of Public Subnet 1 (for NAT Gateway)"
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet1Id"
+
+  PublicSubnet2Id:
+    Description: "ID of Public Subnet 2 (for NAT Gateway)"
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet2Id"
+
+  InternetGatewayId:
+    Description: "ID of the Internet Gateway"
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-InternetGatewayId"
+
+  NATGateway1Id:
+    Description: "ID of NAT Gateway 1 (AZ-a)"
+    Value: !Ref NATGateway1
+    Export:
+      Name: !Sub "${AWS::StackName}-NATGateway1Id"
+
+  NATGateway2Id:
+    Description: "ID of NAT Gateway 2 (AZ-b)"
+    Value: !Ref NATGateway2
+    Export:
+      Name: !Sub "${AWS::StackName}-NATGateway2Id"
+
+  # ========================================
+  # Security Group IDs
+  # ========================================
+
+  ALBSecurityGroupId:
+    Description: "Security Group ID for Application Load Balancer"
+    Value: !Ref ALBSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ALBSecurityGroupId"
+
+  EC2SecurityGroupId:
+    Description: "Security Group ID for EC2 instances"
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2SecurityGroupId"
+
+  # ========================================
+  # Load Balancer Resources
+  # ========================================
+
+  ApplicationLoadBalancerArn:
+    Description: "ARN of the Application Load Balancer"
+    Value:
+      !If [
+        EnableALBLogs,
+        !Ref ApplicationLoadBalancerWithLogs,
+        !Ref ApplicationLoadBalancer,
+      ]
+    Export:
+      Name: !Sub "${AWS::StackName}-ApplicationLoadBalancerArn"
+
+  ApplicationLoadBalancerDNS:
+    Description: "DNS name of the Application Load Balancer"
+    Value:
+      !If [
+        EnableALBLogs,
+        !GetAtt ApplicationLoadBalancerWithLogs.DNSName,
+        !GetAtt ApplicationLoadBalancer.DNSName,
+      ]
+    Export:
+      Name: !Sub "${AWS::StackName}-ApplicationLoadBalancerDNS"
+
+  HTTPTargetGroupArn:
+    Description: "ARN of the HTTP Target Group (port 80)"
+    Value: !Ref HTTPTargetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-HTTPTargetGroupArn"
+
+  # ========================================
+  # API Gateway Endpoints and Custom Domain
+  # ========================================
+
+  ALBEndpoint:
+    Description: "Application Load Balancer DNS name"
+    Value:
+      !If [
+        EnableALBLogs,
+        !GetAtt ApplicationLoadBalancerWithLogs.DNSName,
+        !GetAtt ApplicationLoadBalancer.DNSName,
+      ]
+    Export:
+      Name: !Sub "${AWS::StackName}-ALBEndpoint"
+
+  HTTPSEndpoint:
+    Description: "HTTPS endpoint for HTTP/1.1 traffic (port 443 → container port 80)"
+    Value: !If
+      - EnableDNS
+      - !Sub "https://${DomainName}"
+      - !If
+        - EnableALBLogs
+        - !Sub "https://${ApplicationLoadBalancerWithLogs.DNSName}"
+        - !Sub "https://${ApplicationLoadBalancer.DNSName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-HTTPSEndpoint"
+
+  CustomDomainName:
+    Condition: EnableDNS
+    Description: "Custom domain name for the service"
+    Value: !Ref DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CustomDomainName"
+
+  Route53HostedZoneId:
+    Condition: EnableDNSManagement
+    Description: "Auto-discovered Route53 hosted zone ID for DNS records"
+    Value: !GetAtt CustomRoute53DNS.HostedZoneId
+    Export:
+      Name: !Sub "${AWS::StackName}-Route53HostedZoneId"
+
+  Route53HostedZoneName:
+    Condition: EnableDNSManagement
+    Description: "Auto-discovered Route53 hosted zone name"
+    Value: !GetAtt CustomRoute53DNS.HostedZoneName
+    Export:
+      Name: !Sub "${AWS::StackName}-Route53HostedZoneName"
+
+  # ========================================
+  # Custom Resource Outputs (Lambda-created)
+  # ========================================
+
+  AutoScalingGroupName:
+    Description: "Name of the custom Auto Scaling Group (created by Lambda)"
+    Value: !GetAtt CustomAutoScalingGroup.AutoScalingGroupName
+    Export:
+      Name: !Sub "${AWS::StackName}-AutoScalingGroupName"
+
+  AutoScalingGroupArn:
+    Description: "ARN of the custom Auto Scaling Group (created by Lambda)"
+    Value: !GetAtt CustomAutoScalingGroup.AutoScalingGroupArn
+    Export:
+      Name: !Sub "${AWS::StackName}-AutoScalingGroupArn"
+
+  LaunchTemplateId:
+    Description: "ID of the custom Launch Template (created by Lambda)"
+    Value: !GetAtt CustomAutoScalingGroup.LaunchTemplateId
+    Export:
+      Name: !Sub "${AWS::StackName}-LaunchTemplateId"
+
+  WebACLId:
+    Condition: EnableWAFProtection
+    Description: "ID of the WAF WebACL (created by Lambda)"
+    Value: !GetAtt CustomWAF.WebACLId
+    Export:
+      Name: !Sub "${AWS::StackName}-WebACLId"
+
+  WebACLArn:
+    Condition: EnableWAFProtection
+    Description: "ARN of the WAF WebACL (created by Lambda)"
+    Value: !GetAtt CustomWAF.WebACLArn
+    Export:
+      Name: !Sub "${AWS::StackName}-WebACLArn"
+
+  WAFIPSetId:
+    Condition: EnableWAFWithIPSet
+    Description: "ID of the WAF IP Set for allowlisting (created by Lambda)"
+    Value: !GetAtt CustomWAF.IPSetId
+    Export:
+      Name: !Sub "${AWS::StackName}-WAFIPSetId"
+
+  # ========================================
+  # Container JWT Configuration (Optional)
+  # ========================================
+
+  ContainerJWTConfiguration:
+    Condition: EnableContainerJWT
+    Description: "Container JWT authentication configuration summary"
+    Value: !Sub |
+      Container JWT Authentication Enabled:
+      - Cognito User Pool ID: ${CognitoUserPoolId}
+      - Cognito Region: ${CognitoRegion}
+      - App Client ID: ${CognitoAppClientId}
+      - Required Scope: ${CognitoRequiredScope}
+    Export:
+      Name: !Sub "${AWS::StackName}-ContainerJWTConfiguration"
+  EC2InstanceRoleArn:
+    Description: "ARN of the EC2 instance IAM role"
+    Value: !GetAtt EC2InstanceRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2InstanceRoleArn"
+
+  EC2InstanceProfileArn:
+    Description: "ARN of the EC2 instance profile"
+    Value: !GetAtt EC2InstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EC2InstanceProfileArn"
+
+  LambdaExecutionRoleArn:
+    Description: "ARN of the Lambda execution role for custom resources"
+    Value: !GetAtt LambdaCustomResourceRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaExecutionRoleArn"
+
+  # ========================================
+  # CloudWatch Logs
+  # ========================================
+
+  ContainerLogGroupName:
+    Description: "Name of the CloudWatch Log Group for container logs"
+    Value: !Ref ContainerLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ContainerLogGroupName"
+
+  ContainerLogGroupArn:
+    Description: "ARN of the CloudWatch Log Group for container logs"
+    Value: !GetAtt ContainerLogGroup.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ContainerLogGroupArn"
+
+  LambdaCustomResourceLogGroupName:
+    Description: "Name of the CloudWatch Log Group for Lambda custom resource logs"
+    Value: !Ref LambdaCustomResourceLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaLogGroupName"
+
+  CloudWatchDashboardURL:
+    Description: "URL to the CloudWatch operational dashboard"
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-operational-dashboard"
+    Export:
+      Name: !Sub "${AWS::StackName}-DashboardURL"
+
+  # ========================================
+  # Monitoring and Alerting Outputs
+  # ========================================
+
+  LambdaErrorAlarmName:
+    Description: "CloudWatch alarm for Lambda custom resource errors"
+    Value: !Ref LambdaErrorAlarm
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaErrorAlarm"
+
+  ALBUnhealthyTargetsAlarmName:
+    Description: "CloudWatch alarm for ALB unhealthy targets"
+    Value: !Ref ALBUnhealthyTargetsAlarm
+    Export:
+      Name: !Sub "${AWS::StackName}-ALBUnhealthyTargetsAlarm"
+
+  SNSTopicArn:
+    Condition: EnableSNSNotificationsCondition
+    Description: "SNS topic ARN for critical alerts"
+    Value: !Ref CriticalAlertsTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-SNSTopicArn"
+
+  CustomMetricsNamespace:
+    Condition: EnableCustomMetricsCondition
+    Description: "CloudWatch custom metrics namespace for application monitoring"
+    Value: "TollingVision/Application"
+    Export:
+      Name: !Sub "${AWS::StackName}-CustomMetricsNamespace"
+
+  StackCleanupStatus:
+    Description: "Stack cleanup resource for orphaned resources (log groups, WAF resources)"
+    Value: !Sub "Cleanup resource created for stack ${AWS::StackName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-StackCleanupStatus"
+
+  # ========================================
+  # Configuration Summary
+  # ========================================
+
+  DeploymentSummary:
+    Description: "Tolling Vision infrastructure deployment summary"
+    Value: !If
+      - EnableALBLogs
+      - !Sub |
+        Tolling Vision Infrastructure Deployed Successfully
+
+        API Endpoints:
+        - HTTP/1.1: https://${ApplicationLoadBalancerWithLogs.DNSName}
+
+        Configuration:
+        - Container JWT Auth: ${CognitoUserPoolId}
+        - WAF Protection: ${EnableWAF}
+        - DNS Management: ${EnableDNS}
+        - Auto Scaling Group: ${CustomAutoScalingGroup.AutoScalingGroupName}
+        - Container Architecture: ${ImageArchitecture}
+        - Process Count: ${ProcessCount}
+
+        Resources Created:
+        - VPC: ${VPC}
+        - ALB (Public): ${ApplicationLoadBalancerWithLogs}
+        - ASG: ${CustomAutoScalingGroup.AutoScalingGroupName}
+      - !Sub |
+        Tolling Vision Infrastructure Deployed Successfully
+
+        API Endpoints:
+        - HTTP/1.1: https://${ApplicationLoadBalancer.DNSName}
+
+        Configuration:
+        - Container JWT Auth: ${CognitoUserPoolId}
+        - WAF Protection: ${EnableWAF}
+        - DNS Management: ${EnableDNS}
+        - Auto Scaling Group: ${CustomAutoScalingGroup.AutoScalingGroupName}
+        - Container Architecture: ${ImageArchitecture}
+        - Process Count: ${ProcessCount}
+
+        Resources Created:
+        - VPC: ${VPC}
+        - ALB (Public): ${ApplicationLoadBalancer}
+        - ASG: ${CustomAutoScalingGroup.AutoScalingGroupName}
+
+  ContainerConfiguration:
+    Description: "Container configuration details"
+    Value: !Sub |
+      Container Configuration:
+      - Image: public.ecr.aws/smartcloud/tollingvision:${ImageTag}
+      - Architecture: ${ImageArchitecture}
+      - Process Count: ${ProcessCount}
+      - Concurrent Requests: ${ConcurrentRequestCount}
+      - Max Request Size: ${MaxRequestSize} bytes
+      - Request Timeout: ${RequestTimeout}s
+      - Backlog: ${Backlog}
+      - Backlog Timeout: ${BacklogTimeout}s
+
+  NetworkConfiguration:
+    Description: "Network configuration details"
+    Value: !Sub |
+      Network Configuration:
+      - VPC CIDR: ${VpcCidr}
+      - Private Subnets: ${PrivateSubnet1Cidr}, ${PrivateSubnet2Cidr}
+      - Public Subnets: ${PublicSubnet1Cidr}, ${PublicSubnet2Cidr}
+      - Availability Zones: ${AWS::Region}a, ${AWS::Region}b
+      - NAT Gateways: 2 (High Availability)
+      - Internet Gateway: ${InternetGateway}
+
+  SecurityConfiguration:
+    Description: "Security configuration details"
+    Value: !If
+      - EnableALBLogs
+      - !Sub |
+        Security Configuration:
+        - JWT Authentication: ${CognitoUserPoolId}
+        - WAF Protection: ${EnableWAF}
+        - Private Subnets Only: Yes
+        - ALB Entry Point: https://${ApplicationLoadBalancerWithLogs.DNSName}
+        - SSL Certificate: ${CertificateArn}
+        - Security Groups: ALB, EC2 (minimal permissions)
+      - !Sub |
+        Security Configuration:
+        - JWT Authentication: ${CognitoUserPoolId}
+        - WAF Protection: ${EnableWAF}
+        - Private Subnets Only: Yes
+        - ALB Entry Point: https://${ApplicationLoadBalancer.DNSName}
+        - SSL Certificate: ${CertificateArn}
+        - Security Groups: ALB, EC2 (minimal permissions)
+
+  # ========================================
+  # Quick Start Instructions
+  # ========================================
+
+  QuickStartInstructions:
+    Description: "Quick start instructions for using the deployed infrastructure"
+    Value: !If
+      - EnableALBLogs
+      - !Sub |
+        Quick Start Instructions:
+
+        1. API Access:
+           - HTTP/1.1: curl https://${ApplicationLoadBalancerWithLogs.DNSName}
+
+        2. Authentication (if enabled):
+           - Container-level JWT validation using provided Cognito configuration
+           - User Pool ID: ${CognitoUserPoolId}
+           - Required Scope: ${CognitoRequiredScope}
+
+        3. Scaling:
+           - Current capacity: ${DesiredCapacity} instances
+           - Max capacity: ${MaxSize} instances
+           - Instance types: Auto-selected based on ${ImageArchitecture} and ${ProcessCount} processes
+
+        4. Monitoring & Alerting:
+           - Container logs: CloudWatch Logs Group ${ContainerLogGroup}
+           - Lambda logs: CloudWatch Logs Group ${LambdaCustomResourceLogGroup}
+           - Operational Dashboard: ${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-operational-dashboard
+           - Error Detection: Automated log pattern matching and alerting
+           - Health Monitoring: ALB, ASG, API Gateway, and Lambda function health alarms
+           - Performance Monitoring: Response time and throughput tracking
+           - SNS Notifications: ${EnableSNSNotifications} (Email: ${SNSNotificationEmail})
+           - Custom Metrics: ${EnableCustomMetrics} (Namespace: TollingVision/Application)
+      - !Sub |
+        Quick Start Instructions:
+
+        1. API Access:
+           - HTTP/1.1: curl https://${ApplicationLoadBalancer.DNSName}
+
+        2. Authentication (if enabled):
+           - Container-level JWT validation using provided Cognito configuration
+           - User Pool ID: ${CognitoUserPoolId}
+           - Required Scope: ${CognitoRequiredScope}
+
+        3. Scaling:
+           - Current capacity: ${DesiredCapacity} instances
+           - Max capacity: ${MaxSize} instances
+           - Instance types: Auto-selected based on ${ImageArchitecture} and ${ProcessCount} processes
+
+        4. Monitoring & Alerting:
+           - Container logs: CloudWatch Logs Group ${ContainerLogGroup}
+           - Lambda logs: CloudWatch Logs Group ${LambdaCustomResourceLogGroup}
+           - Operational Dashboard: ${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-operational-dashboard
+           - Error Detection: Automated log pattern matching and alerting
+           - Health Monitoring: ALB, ASG, API Gateway, and Lambda function health alarms
+           - Performance Monitoring: Response time and throughput tracking
+           - SNS Notifications: ${EnableSNSNotifications} (Email: ${SNSNotificationEmail})
+           - Custom Metrics: ${EnableCustomMetrics} (Namespace: TollingVision/Application)

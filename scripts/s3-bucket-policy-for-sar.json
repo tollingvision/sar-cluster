@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowServerlessRepoReadAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "serverlessrepo.amazonaws.com"
+      },
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::my-sar-artifacts-bucket/*"
+    },
+    {
+      "Sid": "AllowServerlessRepoListBucket",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "serverlessrepo.amazonaws.com"
+      },
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::my-sar-artifacts-bucket"
+    }
+  ]
+}
