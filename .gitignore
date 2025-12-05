@@ -62,3 +62,6 @@ local-*.json
 # S3 artifacts
 backup-*.yaml
 backup-*.json
+
+# Inner documentation
+GITHUB-SETUP.md
