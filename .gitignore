@@ -18,6 +18,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+.kiro/
 *.swp
 *.swo
 *~
@@ -63,5 +64,5 @@ local-*.json
 backup-*.yaml
 backup-*.json
 
-# Inner documentation
-GITHUB-SETUP.md
+# Internal documentation and templates
+RELEASE-TEMPLATE.md
